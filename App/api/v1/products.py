@@ -6,15 +6,21 @@ import csv
 import io
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from App.core.database import get_db
 from App.core.security import verify_api_key
 from App.models.base import Product
-from App.schemas.product import CSVImportResult, ProductCreate, ProductRead, ProductUpdate
+from App.schemas.product import (
+    CSVImportResult,
+    ProductCreate,
+    ProductRead,
+    ProductToggleTracking,
+    ProductUpdate,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -25,11 +31,15 @@ router = APIRouter(prefix="/products", tags=["products"])
 
 @router.get("/", response_model=list[ProductRead])
 async def list_products(
+    tracked: bool | None = Query(None, description="Filter: true=仅已跟踪, false=仅未跟踪"),
     _api_key: str = Depends(verify_api_key),
     db: AsyncSession = Depends(get_db),
 ) -> list[ProductRead]:
-    """列出所有商品。"""
-    result = await db.execute(select(Product).order_by(Product.created_at.desc()))
+    """列出所有商品。可选 ?tracked=true/false 过滤。"""
+    stmt = select(Product).order_by(Product.created_at.desc())
+    if tracked is not None:
+        stmt = stmt.where(Product.is_tracked == tracked)
+    result = await db.execute(stmt)
     products = result.scalars().all()
     return [ProductRead.model_validate(p) for p in products]
 
@@ -111,6 +121,65 @@ async def delete_product(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="商品不存在")
     await db.delete(product)
     await db.flush()
+
+
+# ── 跟踪管理 ────────────────────────────────────
+
+@router.put("/{product_id}/toggle-tracked", response_model=ProductRead)
+async def toggle_product_tracking(
+    product_id: int,
+    body: ProductToggleTracking,
+    _api_key: str = Depends(verify_api_key),
+    db: AsyncSession = Depends(get_db),
+) -> ProductRead:
+    """切换单个商品的跟踪状态。"""
+    product = await db.get(Product, product_id)
+    if product is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="商品不存在")
+    product.is_tracked = body.is_tracked
+    await db.flush()
+    await db.refresh(product)
+    return ProductRead.model_validate(product)
+
+
+@router.post("/batch-set-tracking")
+async def batch_set_tracking(
+    tracked_ids: list[int],
+    untracked_ids: list[int] | None = None,
+    _api_key: str = Depends(verify_api_key),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """批量设置商品跟踪状态。tracked_ids 设为跟踪，untracked_ids 取消跟踪。"""
+    tracked = 0
+    untracked = 0
+    if tracked_ids:
+        await db.execute(
+            update(Product).where(Product.id.in_(tracked_ids)).values(is_tracked=True)
+        )
+        tracked = len(tracked_ids)
+    if untracked_ids:
+        await db.execute(
+            update(Product).where(Product.id.in_(untracked_ids)).values(is_tracked=False)
+        )
+        untracked = len(untracked_ids)
+    await db.flush()
+    return {"status": "ok", "tracked_count": tracked, "untracked_count": untracked}
+
+
+@router.post("/batch-track")
+async def batch_track(
+    tracked_ids: list[int],
+    _api_key: str = Depends(verify_api_key),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """批量设置商品为已跟踪（兼容旧路径）。"""
+    if not tracked_ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="tracked_ids 不能为空")
+    await db.execute(
+        update(Product).where(Product.id.in_(tracked_ids)).values(is_tracked=True)
+    )
+    await db.flush()
+    return {"status": "ok", "tracked_count": len(tracked_ids)}
 
 
 # ── CSV 批量导入 ─────────────────────────────────

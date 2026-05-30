@@ -50,7 +50,7 @@ async def test_email(
     _api_key: str = Depends(verify_api_key),
 ) -> dict:
     """发送测试邮件，验证 SMTP 配置是否正确。"""
-    ok = await send_test_email()
+    ok, msg = await send_test_email()
     if ok:
-        return {"status": "ok", "message": "测试邮件已发送，请检查收件箱"}
-    return {"status": "error", "message": "发送失败，请检查 SMTP 配置"}
+        return {"status": "ok", "message": msg}
+    return {"status": "error", "message": msg}

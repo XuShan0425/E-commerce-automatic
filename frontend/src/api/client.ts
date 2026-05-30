@@ -40,8 +40,8 @@ async function request<T>(
   const res = await fetch(`${API_BASE}${path}`, init);
 
   if (res.status === 401) {
-    clearApiKey();
-    throw new ApiError(401, 'API Key 无效或已过期，请重新设置');
+    // 不再自动清除 key — 可能是暂时的，让 ApiKeyGuard 处理
+    throw new ApiError(401, 'API Key 无效，请在登录页重新设置');
   }
 
   if (!res.ok) {

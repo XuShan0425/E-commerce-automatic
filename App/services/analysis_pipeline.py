@@ -175,7 +175,7 @@ async def analyze_all_skus(
     Returns:
         {"total": int, "analyzed": int, "results": list[dict], "summary": dict}
     """
-    result = await db.execute(select(Product))
+    result = await db.execute(select(Product).where(Product.is_tracked == True))
     products = list(result.scalars().all())
 
     if not products:

@@ -1,4 +1,4 @@
-import { Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { ApiKeyGuard } from './components/ApiKeyGuard';
 import { Dashboard } from './pages/Dashboard';
@@ -10,17 +10,19 @@ import { Reports } from './pages/Reports';
 
 export function App() {
   return (
-    <ApiKeyGuard>
-      <Layout>
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/products" element={<Products />} />
-          <Route path="/logs" element={<Logs />} />
-          <Route path="/alerts" element={<Alerts />} />
-          <Route path="/settings" element={<Settings />} />
-          <Route path="/reports" element={<Reports />} />
-        </Routes>
-      </Layout>
-    </ApiKeyGuard>
+    <BrowserRouter>
+      <ApiKeyGuard>
+        <Layout>
+          <Routes>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/products" element={<Products />} />
+            <Route path="/logs" element={<Logs />} />
+            <Route path="/alerts" element={<Alerts />} />
+            <Route path="/settings" element={<Settings />} />
+            <Route path="/reports" element={<Reports />} />
+          </Routes>
+        </Layout>
+      </ApiKeyGuard>
+    </BrowserRouter>
   );
 }

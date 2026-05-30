@@ -19,10 +19,17 @@ class BrowserService:
 
     def __init__(self, headless: bool = HEADLESS_DEFAULT) -> None:
         self._playwright = sync_playwright().start()
-        self._browser: Browser = self._playwright.chromium.launch(
-            headless=headless,
-            args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
-        )
+        launch_kwargs: dict = {
+            "headless": headless,
+            "args": ["--disable-blink-features=AutomationControlled"],
+        }
+        if not headless:
+            try:
+                self._browser = self._playwright.chromium.launch(channel="msedge", **launch_kwargs)
+            except Exception:
+                self._browser = self._playwright.chromium.launch(**launch_kwargs)
+        else:
+            self._browser = self._playwright.chromium.launch(**launch_kwargs)
 
     @property
     def browser(self) -> Browser:

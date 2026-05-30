@@ -1,4 +1,4 @@
-"""邮件通知服务 — 通过 SMTP 发送警报邮件."""
+"""邮件通知服务 — 通过 SMTP（经 SOCKS5 代理）发送警报邮件."""
 
 from __future__ import annotations
 
@@ -14,9 +14,44 @@ from App.core.config import settings
 if TYPE_CHECKING:
     from App.models.alert import Alert
 
+SMTP_TIMEOUT = 30
+SMTP_PROXY_SLEEP = 2  # 代理下 banner 延迟补偿（秒）
+
+# ── SOCKS5 代理（可选，国内访问 Gmail 等海外邮箱时需要）──
+SMTP_PROXY_HOST: str = getattr(settings, "SMTP_PROXY_HOST", "")
+SMTP_PROXY_PORT: int = getattr(settings, "SMTP_PROXY_PORT", 0)
+
+
+def _create_smtp_connection() -> smtplib.SMTP:
+    """创建 SMTP 连接。
+
+    当 SMTP_USE_TLS=true 时，用普通 SMTP + STARTTLS（如 Gmail 587）。
+    当 SMTP_USE_TLS=false 时，用 SMTP_SSL 直连（如 163 465）。
+
+    如果配置了 SMTP_PROXY_HOST/PORT，通过 SOCKS5 连接。
+    """
+    use_tls = settings.SMTP_USE_TLS
+    smtp_cls = smtplib.SMTP if use_tls else smtplib.SMTP_SSL
+
+    if SMTP_PROXY_HOST and SMTP_PROXY_PORT:
+        import socks
+        import time
+
+        class _ProxySMTP(smtp_cls):  # type: ignore[valid-type]
+            def _get_socket(self, host, port, timeout):
+                sock = socks.socksocket()
+                sock.set_proxy(socks.SOCKS5, SMTP_PROXY_HOST, int(SMTP_PROXY_PORT))
+                sock.settimeout(timeout)
+                sock.connect((host, port))
+                time.sleep(SMTP_PROXY_SLEEP)
+                return sock
+
+        return _ProxySMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=SMTP_TIMEOUT)
+
+    return smtp_cls(settings.SMTP_HOST, settings.SMTP_PORT, timeout=SMTP_TIMEOUT)
+
 
 def _is_configured() -> bool:
-    """检查邮件配置是否完整。"""
     return bool(
         settings.SMTP_HOST
         and settings.SMTP_USER
@@ -80,75 +115,69 @@ def _build_email(alert: "Alert") -> MIMEMultipart:
     return msg
 
 
-def _send_sync(alert: "Alert") -> bool:
-    """同步发送邮件。返回 True 表示成功。"""
-    if not _is_configured():
-        return False
-
+def _send_sync(msg: MIMEMultipart) -> bool:
+    """同步 SMTP 发送。"""
     try:
-        msg = _build_email(alert)
+        server = _create_smtp_connection()
         if settings.SMTP_USE_TLS:
-            server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=15)
             server.ehlo()
             server.starttls()
             server.ehlo()
-        else:
-            server = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=15)
         server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
         server.sendmail(settings.SMTP_FROM, settings.alert_recipients, msg.as_string())
         server.quit()
         return True
-    except Exception:
+    except Exception as exc:
+        print(f"[email] send failed: {exc}")
         return False
 
 
 async def send_alert_email(alert: "Alert") -> bool:
-    """异步发送警报邮件。在后台线程执行 SMTP 通信。"""
+    """异步发送警报邮件。"""
     if not _is_configured():
         return False
-    return await asyncio.to_thread(_send_sync, alert)
+    msg = _build_email(alert)
+    return await _do_send(msg)
 
 
-async def send_test_email(to: str | None = None) -> bool:
-    """发送测试邮件，验证 SMTP 配置是否正确。
-
-    如果指定 to，临时覆盖收件人（仅本次调用）。
-    """
+async def send_test_email(to: str | None = None) -> tuple[bool, str]:
+    """发送测试邮件，验证 SMTP 配置。返回 (ok, message)。"""
     if not _is_configured():
-        return False
+        return False, "SMTP 配置不完整，请检查 .env"
 
-    # 构造临时 Alert
     class _TestAlert:
         alert_type = "test"
         severity = "info"
-        message = "这是一封测试邮件。如果你收到此邮件，说明 SMTP 配置正确，邮件通知功能正常。"
+        message = "这是一封测试邮件。如果你收到，说明 SMTP + SOCKS5 代理配置正确。"
         created_at = datetime.now(timezone.utc)
 
-    # 如果指定了收件人，临时替换
-    original_recipients = settings.alert_recipients
+    msg = _build_email(_TestAlert())  # type: ignore[arg-type]
+
+    # 如果指定了特定收件人，临时替换
+    original_to = settings.alert_recipients
     if to:
         object.__setattr__(settings, "ALERT_EMAIL_TO", to)
 
     try:
-        msg = _build_email(_TestAlert())  # type: ignore[arg-type]
-        return await asyncio.to_thread(_send_sync_inner, msg)
+        ok = await _do_send(msg)
+        if ok:
+            return True, "测试邮件已发送，请检查收件箱"
+        return False, f"发送失败 — {settings.SMTP_HOST}:{settings.SMTP_PORT}，用户 {settings.SMTP_USER}"
     finally:
         if to:
-            object.__setattr__(settings, "ALERT_EMAIL_TO", ",".join(original_recipients))
+            object.__setattr__(settings, "ALERT_EMAIL_TO", ",".join(original_to))
 
 
-def _send_sync_inner(msg: MIMEMultipart) -> bool:
+async def _do_send(msg: MIMEMultipart) -> bool:
+    """在后台线程中执行 SMTP 发送，带超时保护。"""
     try:
-        if settings.SMTP_USE_TLS:
-            server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=15)
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-        else:
-            server = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=15)
-        server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
-        server.sendmail(settings.SMTP_FROM, settings.alert_recipients, msg.as_string())
-        server.quit()
-        return True
-    except Exception:
+        return await asyncio.wait_for(
+            asyncio.to_thread(_send_sync, msg),
+            timeout=SMTP_TIMEOUT + 5,
+        )
+    except asyncio.TimeoutError:
+        print(f"[email] send timed out ({SMTP_TIMEOUT + 5}s)")
+        return False
+    except Exception as exc:
+        print(f"[email] send failed: {exc}")
         return False

@@ -48,6 +48,9 @@ async def verify_api_key(
     record = result.scalar_one_or_none()
 
     if record is None:
+        # fallback: 允许 ADMIN_API_KEY 作为 bootstrap key（用于创建第一条正式 API Key）
+        if api_key == settings.ADMIN_API_KEY:
+            return api_key
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or revoked API key",

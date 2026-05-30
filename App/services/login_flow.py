@@ -2,20 +2,16 @@
 
 from __future__ import annotations
 
-import asyncio
 import threading
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
-from typing import TYPE_CHECKING
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
+from App.core.database import async_session_factory
+from App.models.cookie import CookieStore
 from App.models.system_state import SystemState
-
-if TYPE_CHECKING:
-    from App.services.browser import BrowserService
-    from App.services.cookie_manager import CookieManager
 
 
 class LoginStatus(str, Enum):
@@ -26,58 +22,104 @@ class LoginStatus(str, Enum):
     TIMEOUT = "timeout"
 
 
-ALIEXPRESS_LOGIN_URL = "https://login.aliexpress.com/"
-ALIEXPRESS_SELLER_URL = "https://home.aliexpress.com/index.htm"
+ALIEXPRESS_LOGIN_URL = "https://csp.aliexpress.com/"
 LOGIN_TIMEOUT_SECONDS = 300  # 5 分钟超时
 
+# 登录页面 URL 特征（在这些页面时表示用户还在登录中）
+LOGIN_PAGE_PATTERNS = ["login.aliexpress.com", "passport.aliexpress.com", "ae.aliexpress.com"]
 
-async def _set_login_status(db: AsyncSession, status: str, message: str = "") -> None:
+# 后台线程与主协程之间的结果传递（线程安全）
+_result_lock = threading.Lock()
+_pending_result: dict | None = None
+
+
+@dataclass
+class LoginResult:
+    status: str
+    message: str
+    cookies: list[dict] | None = None
+
+
+async def _set_login_status(status: str, message: str = "") -> None:
     """更新登录流程状态到 system_state 表。"""
-    result = await db.execute(
-        select(SystemState).where(SystemState.key == "login_status")
-    )
-    record = result.scalar_one_or_none()
-    value = {"status": status, "message": message, "updated_at": datetime.now(timezone.utc).isoformat()}
-    if record is not None:
-        record.value = value  # type: ignore[assignment]
-    else:
-        record = SystemState(key="login_status", value=value)  # type: ignore[arg-type]
-        db.add(record)
-    await db.flush()
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(SystemState).where(SystemState.key == "login_status")
+        )
+        record = result.scalar_one_or_none()
+        value = {"status": status, "message": message, "updated_at": datetime.now(timezone.utc).isoformat()}
+        if record is not None:
+            record.value = value  # type: ignore[assignment]
+        else:
+            record = SystemState(key="login_status", value=value)  # type: ignore[arg-type]
+            db.add(record)
+        await db.commit()
 
 
-async def get_login_status(db: AsyncSession) -> dict:
-    """查询当前登录流程状态。"""
-    result = await db.execute(
-        select(SystemState).where(SystemState.key == "login_status")
-    )
-    record = result.scalar_one_or_none()
-    if record is None:
-        return {"status": LoginStatus.IDLE.value, "message": ""}
-    return record.value
+async def _save_cookies_in_db(domain: str, cookies: list[dict]) -> None:
+    """保存 Cookie 到数据库。"""
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(CookieStore).where(CookieStore.domain == domain)
+        )
+        record = result.scalar_one_or_none()
+        if record is not None:
+            record.cookies_json = cookies  # type: ignore[assignment]
+            record.is_valid = True
+            record.updated_at = datetime.now(timezone.utc)
+        else:
+            record = CookieStore(
+                domain=domain,
+                cookies_json=cookies,  # type: ignore[arg-type]
+                is_valid=True,
+            )
+            db.add(record)
+        await db.commit()
 
 
-def _run_login_sync(
-    db_url: str,
-    cookie_manager_class: type,
-    domain: str,
-    timeout: int,
-) -> dict:
-    """在新线程中执行同步 Playwright 登录流程。
+async def get_login_status(db_ignored=None) -> dict:
+    """查询当前登录流程状态。同时消费后台线程写入的结果。"""
+    global _pending_result
 
-    从数据库加载/保存 Cookie 需要独立的 sync session，
-    因为 Playwright 在 sync 上下文运行。
+    # 检查后台线程是否有待消费的结果
+    with _result_lock:
+        if _pending_result is not None:
+            result = _pending_result
+            _pending_result = None
+            # 释放锁后再做 DB 操作（DB 操作在 async 上下文中安全）
+            if result["status"] == LoginStatus.SUCCESS.value and result.get("cookies"):
+                await _save_cookies_in_db("aliexpress.com", result["cookies"])
+            await _set_login_status(result["status"], result["message"])
+            return {"status": result["status"], "message": result["message"]}
+
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(SystemState).where(SystemState.key == "login_status")
+        )
+        record = result.scalar_one_or_none()
+        if record is None:
+            return {"status": LoginStatus.IDLE.value, "message": ""}
+        return record.value
+
+
+def _run_login_flow_sync(domain: str, timeout: int) -> None:
+    """在后台线程中执行登录流程（纯 Playwright 操作，不碰 DB）。
+
+    完成后将结果写入 _pending_result，由下一次 get_login_status() 消费。
     """
-    from playwright.sync_api import sync_playwright
-
-    result: dict = {"status": LoginStatus.FAILED.value, "message": ""}
+    global _pending_result
 
     try:
+        from playwright.sync_api import sync_playwright
+
         pw = sync_playwright().start()
-        browser = pw.chromium.launch(
-            headless=False,
-            args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
-        )
+        # 优先用系统 Edge（Playwright 自带 Chromium 在 Windows 非 headless 可能 spawn UNKNOWN）
+        launch_kwargs = {"headless": False, "args": ["--disable-blink-features=AutomationControlled"]}
+        try:
+            browser = pw.chromium.launch(channel="msedge", **launch_kwargs)
+        except Exception:
+            browser = pw.chromium.launch(**launch_kwargs)
+
         context = browser.new_context(
             viewport={"width": 1280, "height": 800},
             user_agent=(
@@ -89,96 +131,96 @@ def _run_login_sync(
         page = context.new_page()
         page.goto(ALIEXPRESS_LOGIN_URL, wait_until="domcontentloaded")
 
-        # 等待用户完成登录（轮询 URL 和 Cookie 变化）
-        elapsed = 0
-        poll_interval = 2
+        # 初始等待：给页面重定向留出时间（csp.aliexpress.com 会自动跳转到登录页）
+        page.wait_for_timeout(5_000)
+
+        # 等待用户完成登录：url 不再含登录页特征 + cookie 中有 auth 相关的 key
+        elapsed = 5  # 配合上面初始等待
+        poll_interval = 3
         while elapsed < timeout:
             page.wait_for_timeout(poll_interval * 1000)
             elapsed += poll_interval
 
             current_url = page.url
-            # 检测是否已离开登录页（登录成功标志）
-            if "login.aliexpress.com" not in current_url and "passport.aliexpress.com" not in current_url:
-                cookies = context.cookies()
-                if cookies:
-                    result = {
+            cookies = context.cookies()
+
+            # 还在登录页面 → 继续等待
+            if any(p in current_url for p in LOGIN_PAGE_PATTERNS):
+                continue
+
+            # 已离开登录页，且有 cookie → 登录成功
+            if cookies:
+                serialized = [
+                    {
+                        "name": c["name"],
+                        "value": c["value"],
+                        "domain": c.get("domain", ""),
+                        "path": c.get("path", "/"),
+                        "expires": c.get("expires", -1),
+                        "httpOnly": c.get("httpOnly", False),
+                        "secure": c.get("secure", False),
+                        "sameSite": str(c.get("sameSite", "Lax")),
+                    }
+                    for c in cookies
+                ]
+                browser.close()
+                pw.stop()
+                with _result_lock:
+                    _pending_result = {
                         "status": LoginStatus.SUCCESS.value,
                         "message": "登录成功，Cookie 已保存",
-                        "cookies": [
-                            {
-                                "name": c["name"],
-                                "value": c["value"],
-                                "domain": c.get("domain", ""),
-                                "path": c.get("path", "/"),
-                                "expires": c.get("expires", -1),
-                                "httpOnly": c.get("httpOnly", False),
-                                "secure": c.get("secure", False),
-                                "sameSite": c.get("sameSite", "Lax"),
-                            }
-                            for c in cookies
-                        ],
-                        "cookie_count": len(cookies),
+                        "cookies": serialized,
                     }
-                    break
-
+                return
         else:
-            # 超时
-            result = {
-                "status": LoginStatus.TIMEOUT.value,
-                "message": f"登录超时（{timeout} 秒），请重试",
-            }
-
-        browser.close()
-        pw.stop()
+            browser.close()
+            pw.stop()
+            with _result_lock:
+                _pending_result = {
+                    "status": LoginStatus.TIMEOUT.value,
+                    "message": f"登录超时（{timeout} 秒），请重试",
+                }
+            return
 
     except Exception as exc:
-        result = {
-            "status": LoginStatus.FAILED.value,
-            "message": f"登录流程异常: {str(exc)}",
-        }
-
-    return result
+        with _result_lock:
+            _pending_result = {
+                "status": LoginStatus.FAILED.value,
+                "message": f"登录流程异常: {exc}",
+            }
 
 
 async def start_login_flow(
-    db: AsyncSession,
-    cookie_manager: CookieManager,
     domain: str = "aliexpress.com",
     timeout: int = LOGIN_TIMEOUT_SECONDS,
 ) -> dict:
-    """启动首次登录流程。
+    """启动首次登录流程（非阻塞）。
 
-    在后台线程中启动非 headless 浏览器，用户在浏览器中手动登录速卖通。
+    在后台线程中启动可见浏览器，用户手动登录速卖通。
     登录成功后自动保存 Cookie 到数据库。
+    立即返回，通过 GET /login/status 轮询进度。
     """
-    # 检查是否已有登录流程在运行
-    current = await get_login_status(db)
+    # 先检查是否有未消费的结果
+    global _pending_result
+    with _result_lock:
+        if _pending_result is not None:
+            # 有遗留结果，先消费
+            pending = _pending_result
+            _pending_result = None
+            if pending["status"] == LoginStatus.SUCCESS.value and pending.get("cookies"):
+                await _save_cookies_in_db(domain, pending["cookies"])
+            await _set_login_status(pending["status"], pending["message"])
+
+    current = await get_login_status()
     if current.get("status") == LoginStatus.RUNNING.value:
         return {"status": "error", "message": "已有登录流程正在运行，请等待完成或超时"}
 
-    await _set_login_status(db, LoginStatus.RUNNING.value, "浏览器已启动，请在浏览器中登录速卖通")
+    await _set_login_status(LoginStatus.RUNNING.value, "浏览器已启动，请在浏览器中登录速卖通")
 
-    # 在后台线程运行同步浏览器操作
-    result: dict = {"status": LoginStatus.FAILED.value, "message": ""}
-
-    def _run() -> None:
-        nonlocal result
-        result = _run_login_sync("", type(cookie_manager), domain, timeout)
-
-    thread = threading.Thread(target=_run, daemon=True)
+    thread = threading.Thread(target=_run_login_flow_sync, args=(domain, timeout), daemon=True)
     thread.start()
 
-    # 等待线程完成（非阻塞轮询，给 asyncio 事件循环让出时间）
-    while thread.is_alive():
-        await asyncio.sleep(1)
-
-    # 线程完成，处理结果
-    if result.get("status") == LoginStatus.SUCCESS.value:
-        cookies = result.get("cookies", [])
-        if cookies:
-            await cookie_manager.save_cookies(domain, cookies)
-        await _set_login_status(db, LoginStatus.SUCCESS.value, result.get("message", ""))
-    else:
-        await _set_login_status(db, result.get("status", LoginStatus.FAILED.value), result.get("message", ""))
-
-    return result
+    return {
+        "status": "started",
+        "message": "浏览器已启动，请在弹出的浏览器窗口中登录速卖通。完成后系统将自动保存 Cookie。",
+    }

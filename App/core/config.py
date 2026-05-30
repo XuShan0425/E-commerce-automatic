@@ -1,14 +1,18 @@
 """应用配置 — 从 .env / 环境变量加载."""
 
 from functools import lru_cache
+from pathlib import Path
 from typing import ClassVar
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# .env 在项目根目录（config.py 向上 3 级）
+_ENV_FILE = Path(__file__).resolve().parent.parent.parent / ".env"
+
 
 class Settings(BaseSettings):
     model_config: ClassVar[SettingsConfigDict] = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(_ENV_FILE),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -57,6 +61,9 @@ class Settings(BaseSettings):
     SMTP_USE_TLS: bool = True
     # ── 收件人（多个用逗号分隔）──
     ALERT_EMAIL_TO: str = ""     # e.g. "you@gmail.com, you@outlook.com"
+    # ── SOCKS5 代理（国内访问 Gmail SMTP 需要）──
+    SMTP_PROXY_HOST: str = "127.0.0.1"
+    SMTP_PROXY_PORT: int = 7890
 
     @property
     def alert_recipients(self) -> list[str]:

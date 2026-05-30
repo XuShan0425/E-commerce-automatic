@@ -94,7 +94,7 @@ async def get_latest_analysis(
     db: AsyncSession = Depends(get_db),
 ) -> list[ProfitAnalysisRead]:
     """获取所有 SKU 的最新一次分析结果。"""
-    from sqlalchemy import and_
+    from sqlalchemy import and_, func
 
     # 子查询：每个 sku_id 的最新 calc_time
     subq = (
@@ -106,7 +106,6 @@ async def get_latest_analysis(
         .subquery()
     )
 
-    from sqlalchemy import func
     result = await db.execute(
         select(ProfitAnalysis)
         .join(
