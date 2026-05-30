@@ -6,7 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from App.core.database import get_db
 from App.core.security import verify_api_key
 from App.schemas.alert import AlertRead
-from App.services.alert_service import clear_global_stop, get_active_alerts, resolve_alert
+from App.services.alert_service import clear_global_stop, get_active_alerts, raise_alert, resolve_alert
+from App.services.email_notifier import send_test_email
 
 router = APIRouter(prefix="/alerts", tags=["alerts"])
 
@@ -42,3 +43,14 @@ async def clear_stop(
     """清除全局停止标志（处理完所有警报后）。"""
     await clear_global_stop(db)
     return {"status": "ok", "global_stop": False}
+
+
+@router.post("/test-email")
+async def test_email(
+    _api_key: str = Depends(verify_api_key),
+) -> dict:
+    """发送测试邮件，验证 SMTP 配置是否正确。"""
+    ok = await send_test_email()
+    if ok:
+        return {"status": "ok", "message": "测试邮件已发送，请检查收件箱"}
+    return {"status": "error", "message": "发送失败，请检查 SMTP 配置"}

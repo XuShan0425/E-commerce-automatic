@@ -44,6 +44,25 @@ class Settings(BaseSettings):
     # Claude API
     ANTHROPIC_API_KEY: str = ""
 
+    # Email Notification (SMTP)
+    # 用哪个邮箱发信就填哪组。收件人可以填多个，逗号分隔。
+    # ── Gmail (发件) ──
+    SMTP_HOST: str = "smtp.gmail.com"
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""      # Gmail 需用 App Password，不是登录密码
+    SMTP_FROM: str = ""
+    SMTP_USE_TLS: bool = True
+    # ── 收件人（多个用逗号分隔）──
+    ALERT_EMAIL_TO: str = ""     # e.g. "you@gmail.com, you@outlook.com"
+
+    @property
+    def alert_recipients(self) -> list[str]:
+        """解析收件人列表。"""
+        if not self.ALERT_EMAIL_TO:
+            return []
+        return [addr.strip() for addr in self.ALERT_EMAIL_TO.split(",") if addr.strip()]
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -1,4 +1,4 @@
-"""警报通知服务 — 写入警报、设置全局停止、查询未处理警报."""
+"""警报通知服务 — 写入警报、设置全局停止、邮件通知."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ async def raise_alert(
     *,
     set_global_stop: bool = False,
 ) -> Alert:
-    """写入一条警报记录。如果是 critical 级别或 set_global_stop=True，自动设置全局停止标志。"""
+    """写入一条警报记录。critical 级别自动发送邮件并设置全局停止。"""
     alert = Alert(
         alert_type=alert_type,
         severity=severity,
@@ -32,6 +32,11 @@ async def raise_alert(
         await _set_global_stop(db, enabled=True)
 
     await db.refresh(alert)
+
+    # ── 发送邮件通知 ──────────────────────────────
+    from App.services.email_notifier import send_alert_email
+    await send_alert_email(alert)
+
     return alert
 
 
