@@ -17,7 +17,7 @@ router = APIRouter(prefix="/store-products", tags=["store-products"])
 
 @router.post("/fetch")
 async def fetch_store_products(
-    headless: bool = True,
+    headless: bool = False,
     _api_key: str = Depends(verify_api_key),
     db: AsyncSession = Depends(get_db),
 ) -> dict:

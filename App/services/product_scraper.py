@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 GSP_PRODUCT_URL = "https://gsp.aliexpress.com/apps/product/manage"
 
 
-def _run_scrape_sync(cookie_manager: CookieManager, headless: bool = True, timeout: int = 90) -> dict:
+def _run_scrape_sync(cookies: list[dict], headless: bool = False, timeout: int = 90) -> dict:
     """在同步线程中抓取店铺商品列表。"""
     from App.services.browser import BrowserService
 
@@ -28,7 +28,7 @@ def _run_scrape_sync(cookie_manager: CookieManager, headless: bool = True, timeo
 
     try:
         browser_svc = BrowserService(headless=headless)
-        context = browser_svc.new_context(cookie_manager=cookie_manager)
+        context = browser_svc.new_context(cookies=cookies)
         page = context.new_page()
 
         page.goto(GSP_PRODUCT_URL, wait_until="domcontentloaded", timeout=30_000)
@@ -226,7 +226,7 @@ def _extract_products(page) -> list[dict]:
 
 async def scrape_store_products(
     cookie_manager: CookieManager,
-    headless: bool = True,
+    headless: bool = False,
 ) -> dict:
     """抓取店铺商品列表（异步入口）。"""
     import asyncio
@@ -236,10 +236,10 @@ async def scrape_store_products(
         return {
             "success": False,
             "error": "no_cookie",
-            "message": "没有有效的速卖通 Cookie，请先执行首次登录。点击「系统设置」→「启动登录」。",
+            "message": "没有有效的速卖通 Cookie。请先去「系统设置」→「启动登录」，在弹出的浏览器中登录速卖通后重试。",
             "products": [],
         }
 
     loop = asyncio.get_event_loop()
-    raw = await loop.run_in_executor(None, _run_scrape_sync, cookie_manager, headless)
+    raw = await loop.run_in_executor(None, _run_scrape_sync, cookies, headless)
     return raw

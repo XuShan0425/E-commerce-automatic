@@ -32,6 +32,15 @@ export function StoreProductModal({ open, onClose, onSuccess }: Props) {
     fetchProducts();
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape' && phase !== 'fetching') onClose();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, phase, onClose]);
+
   async function fetchProducts() {
     try {
       addToast('正在从速卖通获取店铺商品...', 'info');
@@ -40,15 +49,15 @@ export function StoreProductModal({ open, onClose, onSuccess }: Props) {
       setProducts(fetched);
       setChecked(new Set());
       setCosts({});
-      setPhase('selecting');
       if (fetched.length === 0) {
         setError('未获取到任何商品。请确认店铺中有商品，且 Cookie 有效。');
       }
       addToast(`获取到 ${fetched.length} 件商品`, 'success');
     } catch (e: any) {
       setError(e.message || '获取失败');
-      addToast(e.message || '获取失败', 'error');
+      setProducts([]);
     }
+    setPhase('selecting');
   }
 
   function toggleCheck(idx: number) {
@@ -260,10 +269,10 @@ export function StoreProductModal({ open, onClose, onSuccess }: Props) {
               </button>
               <button
                 onClick={handleImport}
-                disabled={selectedCount === 0 || phase === 'saving'}
+                disabled={selectedCount === 0}
                 className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
               >
-                {phase === 'saving' ? '导入中...' : `导入所选 (${selectedCount})`}
+                导入所选 ({selectedCount})
               </button>
             </div>
           </>

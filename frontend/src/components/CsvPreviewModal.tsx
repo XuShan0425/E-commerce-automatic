@@ -15,7 +15,7 @@ interface Props {
   open: boolean;
   products: Product[];
   onClose: () => void;
-  onConfirm: (trackedIds: number[]) => void;
+  onConfirm: () => void;
 }
 
 export function CsvPreviewModal({ open, products, onClose, onConfirm }: Props) {
@@ -45,7 +45,7 @@ export function CsvPreviewModal({ open, products, onClose, onConfirm }: Props) {
       const trackedIds = Array.from(checked);
       await api.post('/products/batch-track', trackedIds);
       addToast(`已设置 ${trackedIds.length} 件商品为跟踪状态`, 'success');
-      onConfirm(trackedIds);
+      onConfirm();
     } catch (e: any) {
       addToast(e.message, 'error');
     }

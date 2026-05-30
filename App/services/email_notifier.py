@@ -115,8 +115,12 @@ def _build_email(alert: "Alert") -> MIMEMultipart:
     return msg
 
 
-def _send_sync(msg: MIMEMultipart) -> bool:
-    """同步 SMTP 发送。"""
+def _send_sync(msg: MIMEMultipart, recipients: list[str] | None = None) -> bool:
+    """同步 SMTP 发送。可指定收件人列表，默认使用配置的收件人。"""
+    targets = recipients if recipients else settings.alert_recipients
+    if not targets:
+        print("[email] send skipped: no recipients")
+        return False
     try:
         server = _create_smtp_connection()
         if settings.SMTP_USE_TLS:
@@ -124,7 +128,7 @@ def _send_sync(msg: MIMEMultipart) -> bool:
             server.starttls()
             server.ehlo()
         server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
-        server.sendmail(settings.SMTP_FROM, settings.alert_recipients, msg.as_string())
+        server.sendmail(settings.SMTP_FROM, targets, msg.as_string())
         server.quit()
         return True
     except Exception as exc:
@@ -137,7 +141,7 @@ async def send_alert_email(alert: "Alert") -> bool:
     if not _is_configured():
         return False
     msg = _build_email(alert)
-    return await _do_send(msg)
+    return await _do_send_to(msg)
 
 
 async def send_test_email(to: str | None = None) -> tuple[bool, str]:
@@ -153,26 +157,24 @@ async def send_test_email(to: str | None = None) -> tuple[bool, str]:
 
     msg = _build_email(_TestAlert())  # type: ignore[arg-type]
 
-    # 如果指定了特定收件人，临时替换
-    original_to = settings.alert_recipients
+    # 如果指定了特定收件人，临时替换发送目标
     if to:
-        object.__setattr__(settings, "ALERT_EMAIL_TO", to)
+        msg.replace_header("To", to)
 
     try:
-        ok = await _do_send(msg)
+        ok = await _do_send_to(msg, [to] if to else None)
         if ok:
             return True, "测试邮件已发送，请检查收件箱"
         return False, f"发送失败 — {settings.SMTP_HOST}:{settings.SMTP_PORT}，用户 {settings.SMTP_USER}"
-    finally:
-        if to:
-            object.__setattr__(settings, "ALERT_EMAIL_TO", ",".join(original_to))
+    except Exception as exc:
+        return False, f"发送异常: {exc}"
 
 
-async def _do_send(msg: MIMEMultipart) -> bool:
+async def _do_send_to(msg: MIMEMultipart, recipients: list[str] | None = None) -> bool:
     """在后台线程中执行 SMTP 发送，带超时保护。"""
     try:
         return await asyncio.wait_for(
-            asyncio.to_thread(_send_sync, msg),
+            asyncio.to_thread(_send_sync, msg, recipients),
             timeout=SMTP_TIMEOUT + 5,
         )
     except asyncio.TimeoutError:

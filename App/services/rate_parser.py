@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING
 
@@ -24,22 +25,22 @@ logger = logging.getLogger(__name__)
 
 
 async def parse_logistics_rates(
-    browser_service: "BrowserService",
+    browser_service: BrowserService,
 ) -> ParseResultLogistics:
     """抓取物流费率页面并 AI 解析。
 
-    Returns:
-        ParseResultLogistics: 解析结果（包含未确认的费率列表）
+    抓取在后台线程执行（BrowserService 是同步的），AI 解析原生异步调用。
     """
     from App.services.ai_client import parse_logistics_html
-    from App.services.rate_scraper import fetch_logistics_page
+    from App.services.rate_scraper import DEFAULT_LOGISTICS_URL, fetch_logistics_page_sync
 
-    source_url = ""
+    source_url = DEFAULT_LOGISTICS_URL
     raw_response = ""
     parsed_items: list[ParsedLogisticsRate] = []
 
     try:
-        html = await fetch_logistics_page(browser_service)
+        loop = asyncio.get_event_loop()
+        html = await loop.run_in_executor(None, fetch_logistics_page_sync, browser_service)
         raw_data = await parse_logistics_html(html)
         import json
         raw_response = json.dumps(raw_data, ensure_ascii=False, indent=2)
@@ -60,29 +61,29 @@ async def parse_logistics_rates(
         raw_response = str(exc)
 
     return ParseResultLogistics(
-        source_url=source_url or "（抓取失败）",
+        source_url=source_url,
         parsed_items=parsed_items,
         raw_ai_response=raw_response,
     )
 
 
 async def parse_platform_fees(
-    browser_service: "BrowserService",
+    browser_service: BrowserService,
 ) -> ParseResultFees:
     """抓取平台佣金页面并 AI 解析。
 
-    Returns:
-        ParseResultFees: 解析结果（包含未确认的费率列表）
+    抓取在后台线程执行（BrowserService 是同步的），AI 解析原生异步调用。
     """
     from App.services.ai_client import parse_fees_html
-    from App.services.rate_scraper import fetch_fees_page
+    from App.services.rate_scraper import DEFAULT_FEES_URL, fetch_fees_page_sync
 
-    source_url = ""
+    source_url = DEFAULT_FEES_URL
     raw_response = ""
     parsed_items: list[ParsedPlatformFee] = []
 
     try:
-        html = await fetch_fees_page(browser_service)
+        loop = asyncio.get_event_loop()
+        html = await loop.run_in_executor(None, fetch_fees_page_sync, browser_service)
         raw_data = await parse_fees_html(html)
         import json
         raw_response = json.dumps(raw_data, ensure_ascii=False, indent=2)
@@ -101,25 +102,17 @@ async def parse_platform_fees(
         raw_response = str(exc)
 
     return ParseResultFees(
-        source_url=source_url or "（抓取失败）",
+        source_url=source_url,
         parsed_items=parsed_items,
         raw_ai_response=raw_response,
     )
 
 
 async def confirm_logistics_rates(
-    db: "AsyncSession",
+    db: AsyncSession,
     request: ConfirmLogisticsRequest,
 ) -> dict:
-    """确认物流费率并写入数据库。
-
-    Args:
-        db: 数据库会话
-        request: 确认请求（包含费率列表和是否覆盖标志）
-
-    Returns:
-        {"inserted": int, "replaced": int}
-    """
+    """确认物流费率并写入数据库。"""
     from App.models.base import LogisticsRate
 
     if request.overwrite:
@@ -139,18 +132,10 @@ async def confirm_logistics_rates(
 
 
 async def confirm_platform_fees(
-    db: "AsyncSession",
+    db: AsyncSession,
     request: ConfirmFeesRequest,
 ) -> dict:
-    """确认平台佣金并写入数据库。
-
-    Args:
-        db: 数据库会话
-        request: 确认请求（包含费率列表和是否覆盖标志）
-
-    Returns:
-        {"inserted": int, "replaced": int}
-    """
+    """确认平台佣金并写入数据库。"""
     from App.models.base import PlatformFee
 
     if request.overwrite:

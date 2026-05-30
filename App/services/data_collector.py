@@ -26,7 +26,7 @@ AD_PAGES = [
 
 
 def _run_collection_sync(
-    cookie_manager: CookieManager,
+    cookies: list[dict],
     headless: bool = True,
     timeout: int = 60,
 ) -> dict:
@@ -49,7 +49,7 @@ def _run_collection_sync(
 
     try:
         browser_svc = BrowserService(headless=headless)
-        context = browser_svc.new_context(cookie_manager=cookie_manager)
+        context = browser_svc.new_context(cookies=cookies)
         page = context.new_page()
         interceptor = AdDataInterceptor()
         interceptor.attach(page)
@@ -57,9 +57,9 @@ def _run_collection_sync(
         # 逐个访问广告相关页面，等待 API 响应
         for page_url in AD_PAGES:
             try:
-                page.goto(page_url, wait_until="domcontentloaded", timeout=30_000)
+                page.goto(page_url, wait_until="domcontentloaded", timeout=min(30_000, timeout * 1000))
                 # 等待额外时间让 XHR/Fetch 请求完成
-                page.wait_for_timeout(5_000)
+                page.wait_for_timeout(max(2_000, timeout * 50))
                 # 滚动页面触发懒加载
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 page.wait_for_timeout(2_000)
@@ -121,7 +121,7 @@ async def collect_ad_data(
     # ── 在后台线程执行同步浏览器操作 ──────────────
     loop = asyncio.get_event_loop()
     raw = await loop.run_in_executor(
-        None, _run_collection_sync, cookie_manager, headless, timeout
+        None, _run_collection_sync, cookies, headless, timeout
     )
 
     if not raw.get("success"):

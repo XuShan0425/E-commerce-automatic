@@ -35,8 +35,8 @@ class BrowserService:
     def browser(self) -> Browser:
         return self._browser
 
-    def new_context(self, cookie_manager: CookieManager | None = None) -> BrowserContext:
-        """创建浏览器上下文。如果提供了 CookieManager，自动注入已保存的 Cookie。"""
+    def new_context(self, cookie_manager: CookieManager | None = None, cookies: list[dict] | None = None) -> BrowserContext:
+        """创建浏览器上下文。可选注入 Cookie（直接传入或通过 CookieManager 加载）。"""
         context = self._browser.new_context(
             viewport={"width": 1280, "height": 800},
             user_agent=(
@@ -45,10 +45,18 @@ class BrowserService:
                 "Chrome/125.0.0.0 Safari/537.36"
             ),
         )
-        if cookie_manager is not None:
-            cookies = cookie_manager.load_cookies("aliexpress.com")
-            if cookies:
-                context.add_cookies(cookies)
+        if cookies:
+            context.add_cookies(cookies)
+        elif cookie_manager is not None:
+            # CookieManager.load_cookies 是 async，sync 方法中无法 await。
+            # 调用方应先在 async 上下文中加载好 cookies，然后通过 cookies= 传入。
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+                # 有运行中的事件循环 → 用 run_coroutine_threadsafe 不适用
+                # 标记：调用方需显式传入 cookies
+            except RuntimeError:
+                pass
         return context
 
     def close(self) -> None:

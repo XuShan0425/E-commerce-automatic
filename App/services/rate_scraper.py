@@ -1,12 +1,9 @@
-"""Playwright 费率页面抓取 — 获取速卖通帮助中心页面 HTML."""
+"""Playwright 费率页面抓取 — 同步抓取速卖通帮助中心页面 HTML（在后台线程中运行）."""
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING
-
-from App.core.config import settings
 
 if TYPE_CHECKING:
     from App.services.browser import BrowserService
@@ -14,7 +11,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # ── 可配置的目标页面 URL ─────────────────────────
-# 生产环境中通过 .env 配置，此处为占位默认值
 DEFAULT_LOGISTICS_URL = (
     "https://sale.aliexpress.com/__pc/category/logistics.htm"
 )
@@ -22,48 +18,27 @@ DEFAULT_FEES_URL = (
     "https://sale.aliexpress.com/__pc/category/commission.htm"
 )
 
-SCRAPE_TIMEOUT_MS = 30_000  # 页面加载超时
-SCRAPE_WAIT_MS = 3_000      # 额外等待时间（动态内容渲染）
+SCRAPE_TIMEOUT_MS = 30_000
+SCRAPE_WAIT_MS = 3_000
 
 
-async def fetch_page_html(
-    browser_service: "BrowserService",
+def _fetch_page_html_sync(
+    browser_service: BrowserService,
     url: str,
-    *,
     timeout_ms: int = SCRAPE_TIMEOUT_MS,
     wait_ms: int = SCRAPE_WAIT_MS,
 ) -> str:
-    """使用 Playwright 抓取指定页面，返回完整 HTML。
-
-    Args:
-        browser_service: 已初始化的 BrowserService 实例
-        url: 目标页面 URL
-        timeout_ms: 页面加载超时（毫秒）
-        wait_ms: 加载后额外等待时间（等待动态渲染）
-
-    Returns:
-        页面的完整 HTML 内容
-
-    Raises:
-        RuntimeError: 页面加载或抓取失败
-    """
+    """同步抓取指定页面，返回完整 HTML。在所有 BrowserService 使用场景下运行在后台线程。"""
     context = browser_service.new_context()  # 无需 Cookie，帮助页是公开的
     page = None
     try:
         page = context.new_page()
         logger.info("正在抓取页面: %s", url)
 
-        await asyncio.to_thread(
-            page.goto,
-            url,
-            timeout=timeout_ms,
-            wait_until="domcontentloaded",
-        )
+        page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
+        page.wait_for_timeout(wait_ms)
 
-        # 额外等待，确保表格等动态内容加载完成
-        await asyncio.sleep(wait_ms / 1000.0)
-
-        html = await asyncio.to_thread(page.content)
+        html = page.content()
         logger.info("页面抓取完成: %d 字符", len(html))
         return html
 
@@ -73,15 +48,18 @@ async def fetch_page_html(
 
     finally:
         if page is not None:
-            await asyncio.to_thread(page.close)
-        await asyncio.to_thread(context.close)
+            try:
+                page.close()
+            except Exception:
+                pass
+        context.close()
 
 
-async def fetch_logistics_page(browser_service: "BrowserService") -> str:
-    """抓取物流费率页面 HTML。"""
-    return await fetch_page_html(browser_service, DEFAULT_LOGISTICS_URL)
+def fetch_logistics_page_sync(browser_service: BrowserService) -> str:
+    """同步抓取物流费率页面 HTML。"""
+    return _fetch_page_html_sync(browser_service, DEFAULT_LOGISTICS_URL)
 
 
-async def fetch_fees_page(browser_service: "BrowserService") -> str:
-    """抓取平台佣金页面 HTML。"""
-    return await fetch_page_html(browser_service, DEFAULT_FEES_URL)
+def fetch_fees_page_sync(browser_service: BrowserService) -> str:
+    """同步抓取平台佣金页面 HTML。"""
+    return _fetch_page_html_sync(browser_service, DEFAULT_FEES_URL)
