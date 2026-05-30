@@ -99,3 +99,46 @@ CREATE TABLE IF NOT EXISTS api_keys (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     revoked_at  TIMESTAMPTZ
 );
+
+-- ============================================================
+-- Cookie 存储表
+-- ============================================================
+CREATE TABLE IF NOT EXISTS cookie_store (
+    id            SERIAL PRIMARY KEY,
+    domain        VARCHAR(255) NOT NULL UNIQUE,
+    cookies_json  JSONB NOT NULL DEFAULT '[]',
+    is_valid      BOOLEAN NOT NULL DEFAULT true,
+    last_check_at TIMESTAMPTZ,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_cookie_store_domain ON cookie_store (domain);
+
+-- ============================================================
+-- 系统状态表
+-- ============================================================
+CREATE TABLE IF NOT EXISTS system_state (
+    id         SERIAL PRIMARY KEY,
+    key        VARCHAR(100) NOT NULL UNIQUE,
+    value      JSONB NOT NULL DEFAULT '{}',
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_system_state_key ON system_state (key);
+
+-- ============================================================
+-- 警报表
+-- ============================================================
+CREATE TABLE IF NOT EXISTS alerts (
+    id           SERIAL PRIMARY KEY,
+    alert_type   VARCHAR(50) NOT NULL,
+    severity     VARCHAR(20) NOT NULL DEFAULT 'warning',
+    message      TEXT NOT NULL,
+    is_resolved  BOOLEAN NOT NULL DEFAULT false,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    resolved_at  TIMESTAMPTZ
+);
+
+CREATE INDEX idx_alerts_type ON alerts (alert_type);
+CREATE INDEX idx_alerts_resolved ON alerts (is_resolved);
