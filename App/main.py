@@ -6,14 +6,20 @@ from collections.abc import AsyncGenerator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from App.core.config import settings
-from App.core.database import engine
 from App.api.v1 import router as v1_router
+from App.core.config import settings
+from App.core.database import async_session_factory, engine
+from App.services.scheduler import init_scheduler, get_scheduler
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
+    # 启动时初始化调度器（不自动开始，通过 API 手动触发）
+    init_scheduler(async_session_factory)
     yield
+    sched = get_scheduler()
+    if sched is not None:
+        sched.stop()
     await engine.dispose()
 
 

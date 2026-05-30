@@ -23,3 +23,10 @@ class ProductUpdate(BaseModel):
     name: str | None = Field(None, max_length=500)
     cost_price: float | None = Field(None, gt=0)
     category: str | None = Field(None, max_length=200)
+
+
+class CSVImportResult(BaseModel):
+    """CSV 批量导入结果。"""
+    total_rows: int
+    success_count: int
+    failed_rows: list[dict]  # [{row: 行号, sku_id: "xxx", error: "错误描述"}, ...]
