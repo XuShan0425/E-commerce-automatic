@@ -28,3 +28,6 @@ ruff>=0.9,<1.0
 
 # Browser Automation
 playwright>=1.51,<2.0
+
+# Task Scheduling
+apscheduler>=3.10,<4.0
