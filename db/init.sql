@@ -142,3 +142,23 @@ CREATE TABLE IF NOT EXISTS alerts (
 
 CREATE INDEX idx_alerts_type ON alerts (alert_type);
 CREATE INDEX idx_alerts_resolved ON alerts (is_resolved);
+
+-- ============================================================
+-- 操作日志表
+-- ============================================================
+CREATE TABLE IF NOT EXISTS operation_logs (
+    id              SERIAL PRIMARY KEY,
+    sku_id          VARCHAR(100) NOT NULL,
+    operation_type  VARCHAR(50) NOT NULL DEFAULT 'adjust_bid',
+    field_name      VARCHAR(50),
+    old_value       NUMERIC(10, 2),
+    new_value       NUMERIC(10, 2),
+    ai_confidence   NUMERIC(5, 4),
+    ai_reasoning    TEXT,
+    status          VARCHAR(20) NOT NULL DEFAULT 'success',
+    executed_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    details         JSONB DEFAULT '{}'
+);
+
+CREATE INDEX idx_op_logs_sku ON operation_logs (sku_id, executed_at);
+CREATE INDEX idx_op_logs_status ON operation_logs (status);

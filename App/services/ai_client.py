@@ -12,7 +12,7 @@ from App.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
+# URL 和模型从 settings 读取，硬编码仅作为 fallback
 ANTHROPIC_API_VERSION = "2023-06-01"
 
 RATE_PARSING_SYSTEM_PROMPT = """\
@@ -49,17 +49,17 @@ async def _call_claude(
         ValueError: API Key 未配置
         httpx.HTTPError: API 调用失败
     """
-    if not settings.ANTHROPIC_API_KEY:
-        raise ValueError("ANTHROPIC_API_KEY 未配置，请在 .env 中设置")
+    if not settings.LLM_API_KEY:
+        raise ValueError("LLM_API_KEY 未配置，请在 .env 中设置")
 
     headers = {
-        "x-api-key": settings.ANTHROPIC_API_KEY,
+        "x-api-key": settings.LLM_API_KEY,
         "anthropic-version": ANTHROPIC_API_VERSION,
         "content-type": "application/json",
     }
 
     body: dict[str, Any] = {
-        "model": "claude-sonnet-4-20250514",
+        "model": settings.LLM_MODEL,
         "max_tokens": max_tokens,
         "temperature": temperature,
         "system": system_prompt,
@@ -70,7 +70,7 @@ async def _call_claude(
 
     async with httpx.AsyncClient(timeout=120.0) as client:
         response = await client.post(
-            ANTHROPIC_MESSAGES_URL,
+            f"{settings.LLM_API_BASE_URL}/v1/messages",
             headers=headers,
             json=body,
         )
