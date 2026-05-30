@@ -7,6 +7,10 @@ from App.api.v1.auth import router as auth_router
 from App.api.v1.auth_flow import router as auth_flow_router
 from App.api.v1.collect import router as collect_router
 from App.api.v1.health import router as health_router
+from App.api.v1.logistics_rates import router as logistics_rates_router
+from App.api.v1.platform_fees import router as platform_fees_router
+from App.api.v1.products import router as products_router
+from App.api.v1.rate_parsing import router as rate_parsing_router
 from App.api.v1.scheduler_api import router as scheduler_router
 from App.api.v1.system import router as system_router
 
@@ -18,3 +22,7 @@ router.include_router(alerts_router, tags=["alerts"])
 router.include_router(collect_router, tags=["collection"])
 router.include_router(scheduler_router, tags=["scheduler"])
 router.include_router(system_router, tags=["system"])
+router.include_router(products_router, tags=["products"])
+router.include_router(logistics_rates_router, tags=["logistics-rates"])
+router.include_router(platform_fees_router, tags=["platform-fees"])
+router.include_router(rate_parsing_router, tags=["rates"])
