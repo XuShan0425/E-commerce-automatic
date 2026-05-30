@@ -41,8 +41,10 @@ class Settings(BaseSettings):
     # Auth
     ADMIN_API_KEY: str = "admin-bootstrap-key-change-me"
 
-    # Claude API
-    ANTHROPIC_API_KEY: str = ""
+    # LLM API (支持 Anthropic 原生 Messages 格式的兼容服务)
+    LLM_API_KEY: str = ""
+    LLM_API_BASE_URL: str = "https://api.jmrai.com"
+    LLM_MODEL: str = "claude-opus-4-7"
 
     # Email Notification (SMTP)
     # 用哪个邮箱发信就填哪组。收件人可以填多个，逗号分隔。
