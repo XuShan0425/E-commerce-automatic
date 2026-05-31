@@ -244,7 +244,8 @@ async def execute_all_passed(
         dry_run: 仅记录日志不实际执行浏览器操作
 
     Returns:
-        {"total": int, "executed": int, "skipped": int, "pending": int, "failed": int, "results": [...]}
+        {"total": int, "executed": int, "skipped": int,
+         "pending": int, "failed": int, "results": [...]}
     """
     executed = 0
     skipped = 0
@@ -366,6 +367,9 @@ async def reject_pending(
         return {"success": False, "error": f"操作日志状态为 '{log.status}'，非待确认"}
 
     await update_log_status(db, operation_log_id, "rejected")
-    logger.info("已拒绝操作: log_id=%d SKU=%s type=%s", operation_log_id, log.sku_id, log.operation_type)
+    logger.info(
+        "已拒绝操作: log_id=%d SKU=%s type=%s",
+        operation_log_id, log.sku_id, log.operation_type,
+    )
 
     return {"success": True, "status": "rejected", "sku_id": log.sku_id}

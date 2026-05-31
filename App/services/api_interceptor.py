@@ -13,14 +13,31 @@ from playwright.sync_api import Page, Response as PWResponse
 # ── 广告数据识别模式 ────────────────────────────
 # 速卖通后台 API 可能使用多种字段名（驼峰/下划线/缩写）
 _AD_FIELD_PATTERNS: dict[str, list[str]] = {
-    "impressions": ["impression", "impressions", "impressionCnt", "showCnt", "impression_count", "展现", "展现量", "展示", "曝光", "曝光量"],
+    "impressions": [
+        "impression", "impressions", "impressionCnt", "showCnt",
+        "impression_count", "展现", "展现量", "展示", "曝光", "曝光量",
+    ],
     "clicks": ["click", "clicks", "clickCnt", "click_count", "点击", "点击量", "клик", "clic"],
     "ctr": ["ctr", "clickRate", "click_rate", "ctrRate", "点击率"],
-    "orders": ["order", "orders", "orderCnt", "orderCount", "order_count", "transactionCnt", "订单", "订单量", "заказ"],
-    "conversion_rate": ["conversionRate", "conversion_rate", "cvr", "cvrRate", "orderRate", "转化率", "конверсия"],
-    "ad_spend": ["spend", "cost", "adSpend", "adCost", "ad_spend", "charge", "consumeAmt", "花费", "消耗", "расход"],
-    "revenue": ["revenue", "sales", "salesAmt", "salesAmount", "revenueAmt", "transAmt", "销售额", "выручка"],
-    "ad_type": ["adType", "ad_type", "campaignType", "campaign_type", "marketingType", "广告类型"],
+    "orders": [
+        "order", "orders", "orderCnt", "orderCount", "order_count",
+        "transactionCnt", "订单", "订单量", "заказ",
+    ],
+    "conversion_rate": [
+        "conversionRate", "conversion_rate", "cvr", "cvrRate",
+        "orderRate", "转化率", "конверсия",
+    ],
+    "ad_spend": [
+        "spend", "cost", "adSpend", "adCost", "ad_spend",
+        "charge", "consumeAmt", "花费", "消耗", "расход",
+    ],
+    "revenue": [
+        "revenue", "sales", "salesAmt", "salesAmount",
+        "revenueAmt", "transAmt", "销售额", "выручка",
+    ],
+    "ad_type": [
+        "adType", "ad_type", "campaignType", "campaign_type", "marketingType", "广告类型",
+    ],
     "buyer_region": [
         "buyerRegionBreakdown", "buyer_region_breakdown",
         "regionBreakdown", "countryBreakdown", "areaDistribution",
@@ -223,7 +240,9 @@ class AdDataInterceptor:
             ad.clicks = _safe_int(_find_value(candidate, _AD_FIELD_PATTERNS["clicks"]))
             ad.ctr = _safe_float(_find_value(candidate, _AD_FIELD_PATTERNS["ctr"]))
             ad.orders = _safe_int(_find_value(candidate, _AD_FIELD_PATTERNS["orders"]))
-            ad.conversion_rate = _safe_float(_find_value(candidate, _AD_FIELD_PATTERNS["conversion_rate"]))
+            ad.conversion_rate = _safe_float(
+                _find_value(candidate, _AD_FIELD_PATTERNS["conversion_rate"])
+            )
             ad.ad_spend = _safe_float(_find_value(candidate, _AD_FIELD_PATTERNS["ad_spend"]))
             ad.revenue = _safe_float(_find_value(candidate, _AD_FIELD_PATTERNS["revenue"]))
             ad.ad_type = str(_find_value(candidate, _AD_FIELD_PATTERNS["ad_type"]) or "unknown")
@@ -241,6 +260,8 @@ class AdDataInterceptor:
         for candidate in candidates:
             price = CollectedPriceData(source_url=url)
             price.sku_id = str(_find_value(candidate, _AD_FIELD_PATTERNS["sku_id"]) or "")
-            price.current_price = _safe_float(_find_value(candidate, _PRICE_FIELD_PATTERNS["current_price"]))
+            price.current_price = _safe_float(
+                _find_value(candidate, _PRICE_FIELD_PATTERNS["current_price"])
+            )
             if price.current_price > 0 or price.sku_id:
                 self.result.price_data.append(price)

@@ -29,7 +29,9 @@ class Product(AsyncAttrs, Base):
     name: Mapped[str] = mapped_column(String(500), nullable=False)
     cost_price: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     category: Mapped[str | None] = mapped_column(String(200))
-    is_tracked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="false")
+    is_tracked: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

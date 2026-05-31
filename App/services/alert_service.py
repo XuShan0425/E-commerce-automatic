@@ -70,7 +70,11 @@ async def _set_global_stop(db: AsyncSession, enabled: bool) -> None:
         select(SystemState).where(SystemState.key == "global_stop")
     )
     record = result.scalar_one_or_none()
-    value = {"enabled": enabled, "reason": "alert_triggered", "updated_at": datetime.now(timezone.utc).isoformat()}
+    value = {
+        "enabled": enabled,
+        "reason": "alert_triggered",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
     if record is not None:
         record.value = value  # type: ignore[assignment]
     else:

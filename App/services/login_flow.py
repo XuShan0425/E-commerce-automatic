@@ -47,7 +47,11 @@ async def _set_login_status(status: str, message: str = "") -> None:
             select(SystemState).where(SystemState.key == "login_status")
         )
         record = result.scalar_one_or_none()
-        value = {"status": status, "message": message, "updated_at": datetime.now(timezone.utc).isoformat()}
+        value = {
+            "status": status,
+            "message": message,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
         if record is not None:
             record.value = value  # type: ignore[assignment]
         else:

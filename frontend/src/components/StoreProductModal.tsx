@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client';
 import { useApp } from '../contexts/AppContext';
 
@@ -8,6 +8,8 @@ interface FetchedProduct {
   current_price: number;
   category: string;
   already_imported: boolean;
+  listing_time?: string;
+  group?: string;
 }
 
 interface Props {
@@ -24,11 +26,22 @@ export function StoreProductModal({ open, onClose, onSuccess }: Props) {
   const [costs, setCosts] = useState<Record<number, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [groupFilter, setGroupFilter] = useState('');
+
+  const groups = useMemo(() => {
+    const gs = new Set<string>();
+    for (const p of products) {
+      const g = (p.group || p.category || '').trim();
+      if (g) gs.add(g);
+    }
+    return Array.from(gs).sort();
+  }, [products]);
 
   useEffect(() => {
     if (!open) return;
     setPhase('fetching');
     setError(null);
+    setGroupFilter('');
     fetchProducts();
   }, [open]);
 
@@ -45,7 +58,6 @@ export function StoreProductModal({ open, onClose, onSuccess }: Props) {
     try {
       addToast('正在从速卖通获取店铺商品...', 'info');
       const result = await api.post<any>('/store-products/fetch');
-      // 检查结构化错误
       if (result.status === 'error') {
         const err = result.error || {};
         setError(err.suggestion || err.message || '获取失败');
@@ -90,6 +102,22 @@ export function StoreProductModal({ open, onClose, onSuccess }: Props) {
     }
   }
 
+  function selectByGroup() {
+    if (!groupFilter) return;
+    const groupProducts = filteredProducts.filter(p => !p.already_imported);
+    const allInGroup = groupProducts.every(p => checked.has(products.indexOf(p)));
+    const ids = new Set(checked);
+    for (const p of groupProducts) {
+      const idx = products.indexOf(p);
+      if (allInGroup) {
+        ids.delete(idx);
+      } else {
+        ids.add(idx);
+      }
+    }
+    setChecked(ids);
+  }
+
   async function handleImport() {
     const selected: any[] = [];
     for (const idx of checked) {
@@ -114,7 +142,7 @@ export function StoreProductModal({ open, onClose, onSuccess }: Props) {
 
     setPhase('saving');
     try {
-      const result = await api.post<any>('/store-products/import', { selected });
+      const result = await api.post<any>('/store-products/import', selected);
       addToast(`导入完成: ${result.imported} 件（已自动设为跟踪），跳过 ${result.skipped} 件`, 'success');
       onSuccess();
     } catch (e: any) {
@@ -124,27 +152,31 @@ export function StoreProductModal({ open, onClose, onSuccess }: Props) {
   }
 
   function handleClose() {
-    if (phase === 'fetching') return; // 不允许关闭
+    if (phase === 'fetching') return;
     onClose();
   }
 
-  const filteredProducts = products.filter(p =>
-    !search ||
-    p.sku_id.toLowerCase().includes(search.toLowerCase()) ||
-    p.name.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredProducts = products.filter(p => {
+    const matchSearch = !search ||
+      p.sku_id.toLowerCase().includes(search.toLowerCase()) ||
+      p.name.toLowerCase().includes(search.toLowerCase());
+    const matchGroup = !groupFilter ||
+      (p.group || p.category || '').trim() === groupFilter;
+    return matchSearch && matchGroup;
+  });
 
   if (!open) return null;
 
+  const importableCount = products.filter(p => !p.already_imported).length;
   const selectedCount = Array.from(checked).filter(idx => !products[idx].already_imported).length;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/40" onClick={handleClose} />
-      <div className="relative bg-white rounded-xl shadow-xl p-6 w-full max-w-4xl mx-4 max-h-[85vh] flex flex-col">
+      <div className="relative bg-white rounded-xl shadow-xl p-6 w-full max-w-6xl mx-4 max-h-[85vh] flex flex-col">
         <h2 className="text-lg font-semibold text-gray-800 mb-1">从店铺获取商品</h2>
         <p className="text-sm text-gray-500 mb-4">
-          {phase === 'fetching' ? '正在抓取...' : `勾选要跟踪的商品，填入成本价后导入`}
+          {phase === 'fetching' ? '正在抓取...' : '勾选要跟踪的商品，填入成本价后导入'}
         </p>
 
         {/* Fetching */}
@@ -176,27 +208,49 @@ export function StoreProductModal({ open, onClose, onSuccess }: Props) {
         {/* Product selection */}
         {phase === 'selecting' && products.length > 0 && (
           <>
+            {/* Toolbar */}
             <div className="flex items-center gap-3 mb-3 flex-wrap">
               <input
                 type="text"
-                placeholder="搜索..."
+                placeholder="搜索 SKU 或名称..."
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 className="px-3 py-1.5 border border-gray-300 rounded text-sm outline-none focus:ring-2 focus:ring-blue-500 w-48"
               />
+              <select
+                value={groupFilter}
+                onChange={e => setGroupFilter(e.target.value)}
+                className="px-3 py-1.5 border border-gray-300 rounded text-sm outline-none focus:ring-2 focus:ring-blue-500 max-w-[200px]"
+              >
+                <option value="">全部分组</option>
+                {groups.map(g => (
+                  <option key={g} value={g} title={g}>
+                    {g.length > 35 ? g.slice(0, 35) + '...' : g}
+                  </option>
+                ))}
+              </select>
               <button
                 onClick={selectAll}
                 className="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50"
               >
                 全选可导入
               </button>
+              {groupFilter && (
+                <button
+                  onClick={selectByGroup}
+                  className="px-3 py-1.5 border border-blue-300 rounded text-sm text-blue-600 hover:bg-blue-50"
+                >
+                  按分组全选
+                </button>
+              )}
               <span className="text-xs text-gray-400 ml-auto">
-                共 {products.length} 件，已选 {selectedCount} 件
+                总计 {products.length} 件 | 可导入 {importableCount} 件 | 已选 {selectedCount} 件
               </span>
             </div>
 
+            {/* Table */}
             <div className="flex-1 overflow-auto border border-gray-200 rounded-lg">
-              <table className="w-full text-sm">
+              <table className="w-full text-sm table-auto">
                 <thead>
                   <tr className="bg-gray-50 text-gray-500 text-left sticky top-0">
                     <th className="px-3 py-2 w-10">
@@ -210,9 +264,11 @@ export function StoreProductModal({ open, onClose, onSuccess }: Props) {
                         className="rounded"
                       />
                     </th>
-                    <th className="px-3 py-2">SKU ID</th>
-                    <th className="px-3 py-2">商品名称</th>
+                    <th className="px-3 py-2 w-40">SKU ID</th>
+                    <th className="px-3 py-2 min-w-[160px]">商品名称</th>
                     <th className="px-3 py-2 w-28">店铺售价</th>
+                    <th className="px-3 py-2 w-32">上架时间</th>
+                    <th className="px-3 py-2 w-40">分组 / 类目</th>
                     <th className="px-3 py-2 w-36">成本价 (USD) *</th>
                   </tr>
                 </thead>
@@ -221,6 +277,8 @@ export function StoreProductModal({ open, onClose, onSuccess }: Props) {
                     const idx = products.indexOf(p);
                     const isChecked = checked.has(idx);
                     const isImported = p.already_imported;
+                    const groupLabel = p.group || p.category || '-';
+                    const listingTime = p.listing_time || '-';
                     return (
                       <tr
                         key={p.sku_id}
@@ -239,11 +297,17 @@ export function StoreProductModal({ open, onClose, onSuccess }: Props) {
                           )}
                         </td>
                         <td className="px-3 py-2 font-mono text-xs">{p.sku_id}</td>
-                        <td className="px-3 py-2 max-w-xs truncate" title={p.name}>
+                        <td className="px-3 py-2 max-w-[200px] truncate" title={p.name}>
                           {p.name}
                         </td>
                         <td className="px-3 py-2 text-xs text-gray-500">
                           {p.current_price > 0 ? `$${p.current_price.toFixed(2)}` : '-'}
+                        </td>
+                        <td className="px-3 py-2 text-xs text-gray-500 whitespace-nowrap">
+                          {listingTime}
+                        </td>
+                        <td className="px-3 py-2 text-xs text-gray-500 max-w-[160px] truncate" title={groupLabel}>
+                          {groupLabel}
                         </td>
                         <td className="px-3 py-2">
                           {isImported ? (
@@ -267,6 +331,13 @@ export function StoreProductModal({ open, onClose, onSuccess }: Props) {
                       </tr>
                     );
                   })}
+                  {filteredProducts.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="px-3 py-8 text-center text-gray-400 text-sm">
+                        没有匹配的商品
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
