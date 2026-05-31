@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useApp } from '../contexts/AppContext';
-import { getApiKey, clearApiKey, setApiKey as storeApiKey } from '../api/client';
+import { getApiKey, clearApiKey, setApiKey as storeApiKey, ApiError } from '../api/client';
 
 export function ApiKeyGuard({ children }: { children: React.ReactNode }) {
   const { apiKey, setApiKey, addToast } = useApp();
@@ -33,6 +33,13 @@ export function ApiKeyGuard({ children }: { children: React.ReactNode }) {
     const res = await fetch('/api/v1/health', { headers: { 'X-API-Key': key.trim() } });
     if (res.status === 401) {
       addToast('API Key 无效，请检查后重试', 'error');
+      // 尝试解析错误详情
+      try {
+        const j = await res.json();
+        if (j.error?.suggestion) {
+          addToast(j.error.suggestion, 'info');
+        }
+      } catch {}
       setChecking(false);
       return;
     }
@@ -49,6 +56,14 @@ export function ApiKeyGuard({ children }: { children: React.ReactNode }) {
         storeApiKey(data.raw_key);
         setApiKey(data.raw_key);
         addToast('已自动创建正式 API Key (ak-xxx) 并保存', 'success');
+        return;
+      }
+      // 失败时检查是否是已有 key
+      if (createRes.status === 401) {
+        // 这是有效的 key 但不是 bootstrap key — 直接用
+        storeApiKey(key.trim());
+        setApiKey(key.trim());
+        setChecking(false);
         return;
       }
     } catch {

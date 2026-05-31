@@ -11,17 +11,19 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from App.services.api_interceptor import AdDataInterceptor, CollectedAdData, CollectedPriceData
+from App.core.errors import ErrorCode, error_response
 
 if TYPE_CHECKING:
     from App.services.browser import BrowserService
     from App.services.cookie_manager import CookieManager
 
-# ── 速卖通卖家中心页面 ──────────────────────────
-# 广告数据通常在以下几个页面能触发 API 调用
+# ── 速卖通卖家中心页面 (2026-05-31 实测) ────────
+# 旧域名 gsp.aliexpress.com 已废弃，新架构统一用 csp.aliexpress.com
+# ad.aliexpress.com 需独立登录且返回空页面 — 改用 CSP 内部推广入口
 AD_PAGES = [
-    "https://ad.aliexpress.com/campaign/home",
-    "https://gsp.aliexpress.com/apps/promotion/home",
-    "https://home.aliexpress.com/index.htm",  # 首页也可能触发
+    "https://csp.aliexpress.com/",  # CSP 首页 (触发 dashboard API)
+    "https://csp.aliexpress.com/m_apps/p4p-pages/home?p4p_enter_from=sidebar",  # P4P 站内推广
+    "https://csp.aliexpress.com/m_apps/all-in-one-promotion/home",  # 一站式推广
 ]
 
 
@@ -99,11 +101,7 @@ async def collect_ad_data(
     # ── 前置检查：Cookie ──────────────────────────
     cookies = await cookie_manager.load_cookies("aliexpress.com")
     if not cookies:
-        return {
-            "success": False,
-            "error": "no_cookie",
-            "message": "没有有效的速卖通 Cookie，请先执行首次登录",
-        }
+        return error_response(ErrorCode.COOKIE_MISSING, details={"action": "请先执行首次登录"})
 
     # ── 检查全局停止 ──────────────────────────────
     from App.models.system_state import SystemState
@@ -112,11 +110,7 @@ async def collect_ad_data(
     )
     stop_record = stop_result.scalar_one_or_none()
     if stop_record and stop_record.value.get("enabled"):
-        return {
-            "success": False,
-            "error": "global_stop",
-            "message": "全局停止已启用，跳过采集",
-        }
+        return error_response(ErrorCode.GLOBAL_STOP, details={"action": "请检查警报中心并清除全局停止"})
 
     # ── 在后台线程执行同步浏览器操作 ──────────────
     loop = asyncio.get_event_loop()
@@ -125,11 +119,10 @@ async def collect_ad_data(
     )
 
     if not raw.get("success"):
-        return {
-            "success": False,
-            "error": "collection_failed",
-            "message": "数据采集失败: " + "; ".join(raw.get("errors", [])),
-        }
+        return error_response(
+            ErrorCode.NETWORK_ERROR,
+            "数据采集失败: " + "; ".join(raw.get("errors", [])),
+        )
 
     # ── 写入数据库 ────────────────────────────────
     from App.models.base import AdSnapshot, PriceSnapshot

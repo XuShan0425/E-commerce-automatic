@@ -13,18 +13,18 @@ from playwright.sync_api import Page, Response as PWResponse
 # ── 广告数据识别模式 ────────────────────────────
 # 速卖通后台 API 可能使用多种字段名（驼峰/下划线/缩写）
 _AD_FIELD_PATTERNS: dict[str, list[str]] = {
-    "impressions": ["impression", "impressions", "impressionCnt", "showCnt", "impression_count"],
-    "clicks": ["click", "clicks", "clickCnt", "click_count"],
-    "ctr": ["ctr", "clickRate", "click_rate", "ctrRate"],
-    "orders": ["order", "orders", "orderCnt", "orderCount", "order_count", "transactionCnt"],
-    "conversion_rate": ["conversionRate", "conversion_rate", "cvr", "cvrRate", "orderRate"],
-    "ad_spend": ["spend", "cost", "adSpend", "adCost", "ad_spend", "charge", "consumeAmt"],
-    "revenue": ["revenue", "sales", "salesAmt", "salesAmount", "revenueAmt", "transAmt"],
-    "ad_type": ["adType", "ad_type", "campaignType", "campaign_type", "marketingType"],
+    "impressions": ["impression", "impressions", "impressionCnt", "showCnt", "impression_count", "展现", "展现量", "展示", "曝光", "曝光量"],
+    "clicks": ["click", "clicks", "clickCnt", "click_count", "点击", "点击量", "клик", "clic"],
+    "ctr": ["ctr", "clickRate", "click_rate", "ctrRate", "点击率"],
+    "orders": ["order", "orders", "orderCnt", "orderCount", "order_count", "transactionCnt", "订单", "订单量", "заказ"],
+    "conversion_rate": ["conversionRate", "conversion_rate", "cvr", "cvrRate", "orderRate", "转化率", "конверсия"],
+    "ad_spend": ["spend", "cost", "adSpend", "adCost", "ad_spend", "charge", "consumeAmt", "花费", "消耗", "расход"],
+    "revenue": ["revenue", "sales", "salesAmt", "salesAmount", "revenueAmt", "transAmt", "销售额", "выручка"],
+    "ad_type": ["adType", "ad_type", "campaignType", "campaign_type", "marketingType", "广告类型"],
     "buyer_region": [
         "buyerRegionBreakdown", "buyer_region_breakdown",
         "regionBreakdown", "countryBreakdown", "areaDistribution",
-        "regionList", "countryList",
+        "regionList", "countryList", "国家", "地区",
     ],
     "sku_id": ["skuId", "sku_id", "productId", "product_id", "itemId", "item_id"],
 }
@@ -105,6 +105,19 @@ def _safe_int(value: Any, default: int = 0) -> int:
 
 # ── 广告 API URL 特征 ───────────────────────────
 _AD_URL_PATTERNS = [
+    # ── 实时 mtop API (CSP 卖家中心) ────────────
+    r"seller-acs\.aliexpress\.com/h5/mtop.*adv",
+    r"seller-acs\.aliexpress\.com/h5/mtop.*campaign",
+    r"seller-acs\.aliexpress\.com/h5/mtop.*promotion",
+    r"seller-acs\.aliexpress\.com/h5/mtop.*advert",
+    r"seller-acs\.aliexpress\.com/h5/mtop.*dashboard",
+    r"seller-acs\.aliexpress\.com/h5/mtop.*report",
+    r"seller-acs\.aliexpress\.com/h5/mtop.*performance",
+    r"seller-acs\.aliexpress\.com/h5/mtop.*bidding",
+    r"seller-acs\.aliexpress\.com/h5/mtop.*budget",
+    r"seller-acs\.aliexpress\.com/h5/mtop.*effect",
+    r"seller-acs\.aliexpress\.com/h5/mtop.*insight",
+    # ── 旧版 API 模式 ──────────────────────────
     r"gsp\.aliexpress\.com",
     r"alds\.aliexpress\.com",
     r"/ad/",
@@ -115,6 +128,17 @@ _AD_URL_PATTERNS = [
     r"advert",
     r"recommend",
     r"traffic",
+    r"dashboard",
+    r"performance",
+    r"analytics",
+    r"insight",
+    r"overview",
+    r"creative",
+    r"targeting",
+    r"bidding",
+    r"budget",
+    r"roi",
+    r"conversion",
 ]
 
 

@@ -40,22 +40,23 @@ class CollectionScheduler:
                 result = await collect_ad_data(db, cookie_mgr, headless=True)
                 self._last_result = result
 
-                if not result.get("success"):
-                    error_type = result.get("error", "unknown")
-                    if error_type == "no_cookie":
+                if result.get("status") == "error":
+                    error_code = (result.get("error") or {}).get("code", "UNKNOWN")
+                    error_msg = (result.get("error") or {}).get("message", "未知错误")
+                    if error_code == "COOKIE_MISSING":
                         await raise_alert(
                             db,
                             "collection_skipped",
-                            "采集跳过: Cookie 不存在，请先执行首次登录",
+                            f"采集跳过: {error_msg}",
                             severity="warning",
                         )
-                    elif error_type == "global_stop":
+                    elif error_code == "GLOBAL_STOP":
                         logger.info("采集跳过: 全局停止已启用")
                     else:
                         await raise_alert(
                             db,
                             "collection_error",
-                            f"数据采集失败: {result.get('message', '未知错误')}",
+                            f"数据采集失败: {error_msg}",
                             severity="warning",
                         )
                 else:

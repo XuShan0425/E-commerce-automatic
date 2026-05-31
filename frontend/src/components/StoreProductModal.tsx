@@ -45,6 +45,17 @@ export function StoreProductModal({ open, onClose, onSuccess }: Props) {
     try {
       addToast('正在从速卖通获取店铺商品...', 'info');
       const result = await api.post<any>('/store-products/fetch');
+      // 检查结构化错误
+      if (result.status === 'error') {
+        const err = result.error || {};
+        setError(err.suggestion || err.message || '获取失败');
+        if (err.code === 'COOKIE_MISSING') {
+          addToast(err.suggestion || '请先登录速卖通', 'error');
+        }
+        setProducts([]);
+        setPhase('selecting');
+        return;
+      }
       const fetched = result.products || [];
       setProducts(fetched);
       setChecked(new Set());
