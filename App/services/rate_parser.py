@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from typing import TYPE_CHECKING
 
+from App.core.logging import get_logger
+
 from sqlalchemy import delete as sql_delete
+
+from App.models.base import LogisticsRate, PlatformFee
 
 from App.schemas.rates import (
     ConfirmFeesRequest,
@@ -21,7 +24,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
     from App.services.browser import BrowserService
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def parse_logistics_rates(
@@ -113,7 +116,6 @@ async def confirm_logistics_rates(
     request: ConfirmLogisticsRequest,
 ) -> dict:
     """确认物流费率并写入数据库。"""
-    from App.models.base import LogisticsRate
 
     if request.overwrite:
         await db.execute(sql_delete(LogisticsRate))
@@ -136,7 +138,6 @@ async def confirm_platform_fees(
     request: ConfirmFeesRequest,
 ) -> dict:
     """确认平台佣金并写入数据库。"""
-    from App.models.base import PlatformFee
 
     if request.overwrite:
         await db.execute(sql_delete(PlatformFee))

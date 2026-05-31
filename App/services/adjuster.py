@@ -3,21 +3,20 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import random
+
+from App.core.logging import get_logger
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from App.services.browser import BrowserService
-    from App.services.cookie_manager import CookieManager
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # ── 速卖通后台页面 URL (2026-05-31 实测) ────────
 # CSP 使用内部 SPA 路由，非独立域名
 PRODUCT_MANAGE_URL = "https://csp.aliexpress.com/m_apps/productManage/list-manage?channelId=363432"
 AD_MANAGE_URL = "https://csp.aliexpress.com/m_apps/p4p-pages/home?p4p_enter_from=sidebar"  # 站内推广(P4P)
-AD_ALL_IN_ONE_URL = "https://csp.aliexpress.com/m_apps/all-in-one-promotion/home"  # 一站式推广
 CSP_HOME_URL = "https://csp.aliexpress.com/"
 
 # ── 选择器字典 (基于 2026-05-31 CSP 实测) ────────
@@ -159,10 +158,10 @@ def _safe_fill(page, selectors: list[str], value: str, timeout: int = 10_000) ->
 
 def execute_adjust_bid(
     browser_svc: BrowserService,
-    cookie_mgr: CookieManager,
     sku_id: str,
     old_budget: float,
     new_budget: float,
+    cookies: list[dict] | None = None,
 ) -> dict[str, Any]:
     """调整广告出价/预算。
 
@@ -177,7 +176,7 @@ def execute_adjust_bid(
         "error": None,
     }
 
-    context = browser_svc.new_context(cookie_manager=cookie_mgr)
+    context = browser_svc.new_context(cookies=cookies)
     page = None
     try:
         page = context.new_page()
@@ -212,7 +211,7 @@ def execute_adjust_bid(
             try:
                 page.close()
             except Exception:
-                pass
+                logger.debug("page close failed in adjust_bid")
         context.close()
 
     return result
@@ -220,10 +219,10 @@ def execute_adjust_bid(
 
 def execute_adjust_price(
     browser_svc: BrowserService,
-    cookie_mgr: CookieManager,
     sku_id: str,
     current_price: float,
     new_price: float,
+    cookies: list[dict] | None = None,
 ) -> dict[str, Any]:
     """调整商品售价。
 
@@ -238,7 +237,7 @@ def execute_adjust_price(
         "error": None,
     }
 
-    context = browser_svc.new_context(cookie_manager=cookie_mgr)
+    context = browser_svc.new_context(cookies=cookies)
     page = None
     try:
         page = context.new_page()
@@ -258,7 +257,7 @@ def execute_adjust_price(
             try:
                 page.wait_for_selector(SELECTORS["success_toast"], timeout=5_000)
             except Exception:
-                pass
+                logger.debug("success toast not found in adjust_price")
             result["success"] = True
 
         page.close()
@@ -270,7 +269,7 @@ def execute_adjust_price(
             try:
                 page.close()
             except Exception:
-                pass
+                logger.debug("page close failed in adjust_price")
         context.close()
 
     return result
@@ -278,8 +277,8 @@ def execute_adjust_price(
 
 def execute_stop_ad(
     browser_svc: BrowserService,
-    cookie_mgr: CookieManager,
     sku_id: str,
+    cookies: list[dict] | None = None,
 ) -> dict[str, Any]:
     """暂停/停止推广活动。
 
@@ -292,7 +291,7 @@ def execute_stop_ad(
         "error": None,
     }
 
-    context = browser_svc.new_context(cookie_manager=cookie_mgr)
+    context = browser_svc.new_context(cookies=cookies)
     page = None
     try:
         page = context.new_page()
@@ -312,8 +311,7 @@ def execute_stop_ad(
                 if confirm_el:
                     _safe_click(page, [SELECTORS["confirm_btn"]])
             except Exception:
-                # 可能没有确认弹窗
-                pass
+                logger.debug("confirm dialog not found in stop_ad")
             page.wait_for_timeout(2_000)
             result["success"] = True
 
@@ -326,7 +324,7 @@ def execute_stop_ad(
             try:
                 page.close()
             except Exception:
-                pass
+                logger.debug("page close failed in stop_ad")
         context.close()
 
     return result
@@ -334,9 +332,9 @@ def execute_stop_ad(
 
 def execute_switch_ad_type(
     browser_svc: BrowserService,
-    cookie_mgr: CookieManager,
     sku_id: str,
     new_type: str,
+    cookies: list[dict] | None = None,
 ) -> dict[str, Any]:
     """切换广告类型。
 
@@ -350,7 +348,7 @@ def execute_switch_ad_type(
         "error": None,
     }
 
-    context = browser_svc.new_context(cookie_manager=cookie_mgr)
+    context = browser_svc.new_context(cookies=cookies)
     page = None
     try:
         page = context.new_page()
@@ -388,7 +386,7 @@ def execute_switch_ad_type(
             try:
                 page.close()
             except Exception:
-                pass
+                logger.debug("page close failed in switch_ad_type")
         context.close()
 
     return result
@@ -406,7 +404,6 @@ EXECUTORS = {
 def run_executor(
     operation_type: str,
     browser_svc: BrowserService,
-    cookie_mgr: CookieManager,
     **kwargs: Any,
 ) -> dict[str, Any]:
     """根据操作类型分发到对应执行器。"""
@@ -417,4 +414,4 @@ def run_executor(
             "operation": operation_type,
             "error": f"不支持的操作类型: {operation_type}",
         }
-    return executor(browser_svc, cookie_mgr, **kwargs)
+    return executor(browser_svc, **kwargs)

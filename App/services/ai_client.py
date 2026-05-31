@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import json
-import logging
+import time
 from typing import Any
+
+from App.core.logging import get_logger
 
 import httpx
 
 from App.core.config import settings
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # URL 和模型从 settings 读取，硬编码仅作为 fallback
 ANTHROPIC_API_VERSION = "2023-06-01"
@@ -68,6 +70,7 @@ async def _call_claude(
         ],
     }
 
+    t_start = time.perf_counter()
     async with httpx.AsyncClient(timeout=120.0) as client:
         response = await client.post(
             f"{settings.LLM_API_BASE_URL}/v1/messages",
@@ -76,6 +79,17 @@ async def _call_claude(
         )
         response.raise_for_status()
         data = response.json()
+    latency_ms = round((time.perf_counter() - t_start) * 1000)
+
+    usage = data.get("usage", {})
+    logger.info("AI call completed", extra={
+        "model": settings.LLM_MODEL,
+        "latency_ms": latency_ms,
+        "usage": {
+            "input_tokens": usage.get("input_tokens", 0),
+            "output_tokens": usage.get("output_tokens", 0),
+        },
+    })
 
     # 提取文本响应
     content_blocks = data.get("content", [])

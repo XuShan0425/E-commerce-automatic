@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import logging
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from App.core.database import get_db
+from App.core.logging import get_logger
 from App.core.security import verify_api_key
 from App.schemas.rates import (
     ConfirmFeesRequest,
@@ -17,7 +16,7 @@ from App.schemas.rates import (
 )
 from App.services.browser import BrowserService
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/rates", tags=["rates"])
 

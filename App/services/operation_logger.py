@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import logging
 from datetime import datetime, timezone
+
+from App.core.logging import get_logger
 from typing import Any
 
 from sqlalchemy import select
@@ -11,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from App.models.operation_log import OperationLog
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def log_operation(
@@ -117,39 +118,3 @@ async def get_logs(
     stmt = stmt.order_by(OperationLog.executed_at.desc()).limit(limit)
     result = await db.execute(stmt)
     return list(result.scalars().all())
-
-
-def _format_log_message(log: OperationLog) -> str:
-    """格式化操作日志为人类可读的消息（符合 CLAUDE.md 规范）。
-
-    示例：2026-05-30 14:32 | 蓝牙耳机 | 调整出价 | $2.80→$2.94 | 置信度82% | 成功
-    """
-    parts = [
-        log.executed_at.strftime("%Y-%m-%d %H:%M") if log.executed_at else "?",
-        log.sku_id,
-    ]
-
-    type_names = {
-        "adjust_bid": "调整出价",
-        "adjust_price": "调整价格",
-        "switch_ad_type": "切换广告类型",
-        "stop_ad": "停止推广",
-        "no_action": "无操作",
-    }
-    parts.append(type_names.get(log.operation_type, log.operation_type))
-
-    if log.old_value is not None and log.new_value is not None:
-        parts.append(f"${log.old_value:.2f}→${log.new_value:.2f}")
-
-    if log.ai_confidence is not None:
-        parts.append(f"置信度{log.ai_confidence:.0%}")
-
-    status_names = {
-        "success": "成功",
-        "failed": "失败",
-        "pending_confirmation": "待确认",
-        "rejected": "已拒绝",
-    }
-    parts.append(status_names.get(log.status, log.status))
-
-    return " | ".join(parts)

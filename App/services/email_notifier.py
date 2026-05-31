@@ -10,6 +10,9 @@ from email.mime.text import MIMEText
 from typing import TYPE_CHECKING
 
 from App.core.config import settings
+from App.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 if TYPE_CHECKING:
     from App.models.alert import Alert
@@ -119,7 +122,7 @@ def _send_sync(msg: MIMEMultipart, recipients: list[str] | None = None) -> bool:
     """同步 SMTP 发送。可指定收件人列表，默认使用配置的收件人。"""
     targets = recipients if recipients else settings.alert_recipients
     if not targets:
-        print("[email] send skipped: no recipients")
+        logger.warning("send skipped: no recipients")
         return False
     try:
         server = _create_smtp_connection()
@@ -132,7 +135,7 @@ def _send_sync(msg: MIMEMultipart, recipients: list[str] | None = None) -> bool:
         server.quit()
         return True
     except Exception as exc:
-        print(f"[email] send failed: {exc}")
+        logger.error("send failed: %s", exc)
         return False
 
 
@@ -178,8 +181,8 @@ async def _do_send_to(msg: MIMEMultipart, recipients: list[str] | None = None) -
             timeout=SMTP_TIMEOUT + 5,
         )
     except asyncio.TimeoutError:
-        print(f"[email] send timed out ({SMTP_TIMEOUT + 5}s)")
+        logger.error("send timed out (%ds)", SMTP_TIMEOUT + 5)
         return False
     except Exception as exc:
-        print(f"[email] send failed: {exc}")
+        logger.error("send failed: %s", exc)
         return False

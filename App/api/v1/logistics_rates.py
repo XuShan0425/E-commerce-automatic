@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import logging
-
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select, delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from App.core.database import get_db
+from App.core.logging import get_logger
 from App.core.security import verify_api_key
 from App.models.base import LogisticsRate
 from App.schemas.rates import (
@@ -19,7 +18,7 @@ from App.schemas.rates import (
     ParsedLogisticsRate,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/logistics-rates", tags=["logistics-rates"])
 

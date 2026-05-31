@@ -2,18 +2,16 @@
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
+
+from App.core.logging import get_logger
 
 from playwright.sync_api import Browser, BrowserContext, sync_playwright
 
 from App.core.config import settings
 from App.services.stealth import STEALTH_JS
 
-if TYPE_CHECKING:
-    from App.services.cookie_manager import CookieManager
-
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 HEADLESS_DEFAULT = settings.ENVIRONMENT != "development"
 
@@ -66,12 +64,11 @@ class BrowserService:
 
     def new_context(
         self,
-        cookie_manager: "CookieManager | None" = None,
         cookies: list[dict] | None = None,
     ) -> BrowserContext:
         """创建浏览器上下文，自动注入反检测脚本。
 
-        可选注入 Cookie（直接传入或通过 CookieManager 加载）。
+        可选注入 Cookie（直接传入 Playwright 格式的 cookies 列表）。
         """
         context = self._browser.new_context(
             viewport={"width": 1440, "height": 900},
@@ -96,10 +93,6 @@ class BrowserService:
         # ── Cookie 注入 ─────────────────────────
         if cookies:
             context.add_cookies(cookies)
-        elif cookie_manager is not None:
-            # CookieManager.load_cookies 是 async，sync 方法中无法 await。
-            # 调用方应先在 async 上下文中加载好 cookies，然后通过 cookies= 传入。
-            pass
 
         return context
 
@@ -108,8 +101,8 @@ class BrowserService:
         try:
             self._browser.close()
         except Exception:
-            pass
+            logger.debug("browser close failed (may already be closed)")
         try:
             self._playwright.stop()
         except Exception:
-            pass
+            logger.debug("playwright stop failed (may already be closed)")

@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from typing import Any
+
+from App.core.logging import get_logger
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-logger = logging.getLogger(__name__)
+from App.models.operation_log import OperationLog
+from App.services.operation_logger import log_operation, update_log_status
+from App.services.alert_service import raise_alert
+from App.services.adjuster import run_executor
+from App.services.browser import BrowserService
+from App.services.cookie_manager import CookieManager
+
+logger = get_logger(__name__)
 
 
 async def execute_decision(
@@ -25,11 +33,8 @@ async def execute_decision(
         dry_run: True 时只写日志不实际执行浏览器操作
 
     Returns:
-        执行结果 dict
+         执行结果 dict
     """
-    from App.services.operation_logger import log_operation, update_log_status
-    from App.services.alert_service import raise_alert
-
     sku_id = analysis_result.get("sku_id", "unknown")
     decision = analysis_result.get("decision") or {}
     boundary = analysis_result.get("boundary") or {}
@@ -184,15 +189,10 @@ async def _run_adjuster(
     confidence: float,
 ) -> dict[str, Any]:
     """在后台线程中执行浏览器调整操作。"""
-    from App.services.adjuster import run_executor
-    from App.services.browser import BrowserService
-    from App.services.cookie_manager import CookieManager
-    from App.services.operation_logger import log_operation
-
     cookie_mgr = CookieManager(db)
+    cookies = await cookie_mgr.load_cookies("aliexpress.com")
 
-    # 构建执行器参数
-    kwargs: dict[str, Any] = {"sku_id": sku_id}
+    kwargs: dict[str, Any] = {"sku_id": sku_id, "cookies": cookies}
     if decision_type == "adjust_bid":
         kwargs["old_budget"] = action.get("current_value", 0)
         kwargs["new_budget"] = action.get("new_value", 0)
@@ -209,7 +209,7 @@ async def _run_adjuster(
     def _sync_execute() -> dict[str, Any]:
         browser_svc = BrowserService(headless=True)
         try:
-            return run_executor(decision_type, browser_svc, cookie_mgr, **kwargs)
+            return run_executor(decision_type, browser_svc, **kwargs)
         finally:
             browser_svc.close()
 
@@ -291,12 +291,8 @@ async def confirm_pending(
         operation_log_id: 待确认的操作日志 ID
 
     Returns:
-        执行结果 dict
+         执行结果 dict
     """
-    from App.models.operation_log import OperationLog
-    from App.services.operation_logger import update_log_status
-    from App.services.alert_service import raise_alert
-
     log = await db.get(OperationLog, operation_log_id)
     if log is None:
         return {"success": False, "error": f"操作日志 {operation_log_id} 不存在"}
@@ -354,11 +350,8 @@ async def reject_pending(
         operation_log_id: 待确认的操作日志 ID
 
     Returns:
-        结果 dict
+         结果 dict
     """
-    from App.models.operation_log import OperationLog
-    from App.services.operation_logger import update_log_status
-
     log = await db.get(OperationLog, operation_log_id)
     if log is None:
         return {"success": False, "error": f"操作日志 {operation_log_id} 不存在"}

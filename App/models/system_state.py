@@ -2,9 +2,9 @@
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, String
+from sqlalchemy import DateTime, Integer, String, select
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.asyncio import AsyncAttrs
+from sqlalchemy.ext.asyncio import AsyncAttrs, AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -22,3 +22,12 @@ class SystemState(AsyncAttrs, Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+async def is_global_stop_active(db: AsyncSession) -> bool:
+    """Check if global_stop flag is enabled in system_state."""
+    result = await db.execute(
+        select(SystemState).where(SystemState.key == "global_stop")
+    )
+    record = result.scalar_one_or_none()
+    return bool(record and record.value.get("enabled"))

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import csv
 import io
-import logging
+
+from App.core.logging import get_logger
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from sqlalchemy import select, update
@@ -22,7 +23,7 @@ from App.schemas.product import (
     ProductUpdate,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/products", tags=["products"])
 
