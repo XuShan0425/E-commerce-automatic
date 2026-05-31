@@ -1,0 +1,96 @@
+# Playwright 参考
+
+> 为智能体提供的 Playwright 模式速查。版本: 1.51+ (sync API)
+
+## 浏览器实例管理
+
+项目通过 `BrowserService` (App/services/browser.py) 管理浏览器：
+
+```python
+from App.services.browser import BrowserService
+
+browser_svc = BrowserService(headless=False)
+context = browser_svc.new_context(cookies=cookie_list)
+page = context.new_page()
+```
+
+## 页面导航
+
+```python
+page.goto("https://seller.aliexpress.com", wait_until="domcontentloaded", timeout=30000)
+```
+
+## 等待策略
+
+```python
+# 等待网络空闲 (适合 SPA)
+page.wait_for_load_state("networkidle", timeout=10000)
+
+# 等待元素
+page.wait_for_selector(".product-list", timeout=10000)
+
+# 多级 fallback
+try:
+    page.wait_for_selector(".selector-v1", timeout=5000)
+except Exception:
+    page.wait_for_selector(".selector-v2", timeout=5000)
+```
+
+## API 拦截
+
+```python
+page.route("**/api/v2/**", intercept_handler)
+
+def intercept_handler(route):
+    if route.request.method == "GET":
+        route.continue_()
+    else:
+        route.continue_()
+```
+
+## 元素交互
+
+```python
+page.click("button.submit")
+page.fill("input[name='price']", "12.99")
+page.select_option("select#type", "standard")
+```
+
+## 截图
+
+```python
+page.screenshot(path=f".codex-runs/screenshot-{timestamp}.png", full_page=True)
+```
+
+## 反检测
+
+项目注入了完整的 stealth.js (App/services/stealth.py)，包括：
+- navigator.webdriver 覆盖
+- Chrome runtime 伪造
+- plugins/mimeTypes 模拟
+- WebGL 指纹混淆
+- 阿里 Baxia 反爬对抗
+
+## 速卖通页面已知 DOM 结构 (2026-05)
+
+### 卖家中心
+- 登录页面: `#fm-login-id`, `#fm-login-password`, `button[type="submit"]`
+- 广告管理: URL 模式 `**/ad/manage**`
+- 商品列表: `.product-item`, `.product-title`
+- 店铺页面: `.store-product-list`
+
+### 广告 API 端点 (被拦截)
+- `**/api/v2/advertiser/report**`
+- `**/api/v2/campaign/list**`
+- `**/api/v2/product/ad/performance**`
+
+### 选择器变更历史
+- 2026-05: 速卖通卖家中心更新了部分 CSS class，建议使用 data 属性作为首选选择器
+- data 属性通常更稳定: `[data-spm="ad-report"]`, `[data-testid="product-row"]`
+
+## 调试建议
+
+1. 先截图确认页面加载状态
+2. 使用 `page.content()` 检查实际 HTML
+3. 优先使用 data 属性而非 CSS class
+4. 超时后返回部分结果而非完全失败
