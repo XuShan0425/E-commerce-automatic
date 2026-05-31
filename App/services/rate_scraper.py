@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
+
+from App.core.logging import get_logger
 
 if TYPE_CHECKING:
     from App.services.browser import BrowserService
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # ── 可配置的目标页面 URL ─────────────────────────
 DEFAULT_LOGISTICS_URL = (
@@ -51,7 +52,7 @@ def _fetch_page_html_sync(
             try:
                 page.close()
             except Exception:
-                pass
+                logger.debug("page close failed in rate scraper")
         context.close()
 
 

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from App.models.alert import Alert
 from App.models.system_state import SystemState
+from App.services.email_notifier import send_alert_email
 
 
 async def raise_alert(
@@ -34,7 +35,6 @@ async def raise_alert(
     await db.refresh(alert)
 
     # ── 发送邮件通知 ──────────────────────────────
-    from App.services.email_notifier import send_alert_email
     await send_alert_email(alert)
 
     return alert

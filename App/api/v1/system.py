@@ -8,7 +8,6 @@ from App.core.database import get_db
 from App.models.auth import ApiKey
 from App.models.cookie import CookieStore
 from App.models.system_state import SystemState
-from App.services.cookie_health import get_system_status
 from App.services.scheduler import get_scheduler
 
 router = APIRouter(prefix="/system", tags=["system"])

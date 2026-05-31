@@ -10,7 +10,7 @@ psycopg2-binary>=2.9,<3.0
 alembic>=1.14,<2.0
 
 # Redis
-redis>=5.2,<6.0
+# redis>=5.2,<6.0
 
 # Config
 pydantic-settings>=2.7,<3.0
@@ -29,6 +29,9 @@ ruff>=0.9,<1.0
 
 # Browser Automation
 playwright>=1.51,<2.0
+
+# Email Proxy (SOCKS5)
+PySocks>=1.7,<2.0
 
 # Task Scheduling
 apscheduler>=3.10,<4.0

@@ -1,6 +1,6 @@
 ---
 name: agent-reviewer
-description: Use when reviewing the current PR or a task PR for correctness, security, tests, architecture boundaries, maintainability, documentation, and task-scope compliance. Does not modify files unless explicitly asked.
+description: Use when reviewing the current PR or a task PR for correctness, security, tests, architecture boundaries, maintainability, documentation, and task-scope compliance. Does not modify files unless explicitly asked. Also use when user says "review" or "check PR".
 ---
 
 # Agent Reviewer Skill

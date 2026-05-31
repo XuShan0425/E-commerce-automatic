@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import json
-import logging
 from datetime import datetime, timezone
+
+from App.core.logging import get_logger
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from App.models.base import AdSnapshot, PriceSnapshot, ProfitAnalysis
+from App.services.ai_client import _call_claude
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 DECISION_SYSTEM_PROMPT = """\
 你是一个速卖通(AliExpress)广告优化专家。你会收到单个 SKU 的完整数据，
@@ -180,9 +182,8 @@ async def generate_decision(
         snapshots_7d: 近 7 天广告快照
 
     Returns:
-        决策 dict，包含 decision_type / action / reasoning / confidence / risk_level
+         决策 dict，包含 decision_type / action / reasoning / confidence / risk_level
     """
-    from App.services.ai_client import _call_claude
 
     input_data = _build_input_json(
         sku_id, cost_price, current_price, logistics_cost,

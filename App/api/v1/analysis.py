@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-import logging
-
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from App.core.database import get_db
+from App.core.logging import get_logger
 from App.core.security import verify_api_key
 from App.models.base import ProfitAnalysis
 from App.schemas.profit_analysis import ProfitAnalysisRead
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 

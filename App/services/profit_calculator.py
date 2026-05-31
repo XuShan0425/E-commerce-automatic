@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import logging
 from datetime import datetime, timedelta, timezone
+
+from App.core.logging import get_logger
 from typing import Any
 
 from sqlalchemy import func, select
@@ -18,7 +19,7 @@ from App.models.base import (
     ProfitAnalysis,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def _get_product(db: AsyncSession, sku_id: str) -> Product | None:

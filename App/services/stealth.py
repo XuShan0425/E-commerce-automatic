@@ -154,17 +154,15 @@ Function.prototype.toString = function() {
 };
 
 // ── 14. Canvas 指纹混淆 ─────────────────────────
-// 阿里系可能会检查 canvas 指纹判断是否是真实浏览器
-// 轻微噪声化 canvas toDataURL (不破坏功能, 但使指纹不稳定)
+// 轻微噪声化 canvas toDataURL 使指纹不稳定
 const origToDataURL = HTMLCanvasElement.prototype.toDataURL;
 HTMLCanvasElement.prototype.toDataURL = function(type) {
-    // 只在 toBlob/toDataURL 被非用户调用时加噪声
     const ctx = this.getContext('2d');
     if (ctx) {
-        // 给 canvas 加一个几乎不可见的像素偏移
         const imageData = ctx.getImageData(0, 0, 1, 1);
-        if (imageData && imageData.data) {
-            // 不影响主图像
+        if (imageData && imageData.data && imageData.data[3] !== undefined) {
+            imageData.data[3] = (imageData.data[3] ^ 1) | 0;
+            ctx.putImageData(imageData, 0, 0);
         }
     }
     return origToDataURL.apply(this, arguments);
@@ -195,31 +193,3 @@ if (navigator.connection) {
     });
 }
 """.strip()
-
-
-def get_stealth_args() -> list[str]:
-    """获取 Playwright launch args 用于隐藏自动化标记."""
-    return [
-        "--disable-blink-features=AutomationControlled",
-        "--disable-features=IsolateOrigins,site-per-process",
-        "--disable-site-isolation-trials",
-        "--disable-web-security",
-        "--disable-features=BlockInsecurePrivateNetworkRequests",
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-infobars",
-        "--disable-dev-shm-usage",
-        "--disable-crash-reporter",
-        "--disable-component-update",
-        "--disable-background-networking",
-        "--disable-sync",
-        "--disable-default-apps",
-        "--disable-extensions",
-        "--disable-translate",
-        "--hide-scrollbars",
-        "--metrics-recording-only",
-        "--mute-audio",
-        "--no-first-run",
-        "--safebrowsing-disable-auto-update",
-        "--use-angle=swiftshader",  # 避免 GPU 指纹不一致
-    ]

@@ -166,19 +166,8 @@ def _run_login_flow_sync(domain: str, timeout: int) -> None:
 
             # 已离开登录页，且有 cookie → 登录成功
             if cookies:
-                serialized = [
-                    {
-                        "name": c["name"],
-                        "value": c["value"],
-                        "domain": c.get("domain", ""),
-                        "path": c.get("path", "/"),
-                        "expires": c.get("expires", -1),
-                        "httpOnly": c.get("httpOnly", False),
-                        "secure": c.get("secure", False),
-                        "sameSite": str(c.get("sameSite", "Lax")),
-                    }
-                    for c in cookies
-                ]
+                from App.services.cookie_manager import CookieManager
+                serialized = CookieManager.serialize_cookies(cookies)
                 browser.close()
                 pw.stop()
                 with _result_lock:

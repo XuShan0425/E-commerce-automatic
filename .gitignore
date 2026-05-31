@@ -23,5 +23,8 @@ Thumbs.db
 # Docker
 pgdata/
 
-# Codex runs (runtime artifacts)
+# Runtime artifacts
 .codex-runs/
+
+# Node
+node_modules/

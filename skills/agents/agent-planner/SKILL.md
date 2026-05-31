@@ -1,6 +1,6 @@
 ---
 name: agent-planner
-description: Use when the user gives a high-level product or engineering requirement and wants Codex to clarify, plan, split into EPIC/TASK files, and not implement code yet.
+description: Use when the user gives a high-level product or engineering requirement and wants opencode to clarify, plan, split into EPIC/TASK files, and not implement code yet.
 ---
 
 # Agent Planner Skill
@@ -15,7 +15,7 @@ Do not implement code.
 
 Your job is to turn an unclear or broad requirement into versioned planning artifacts that future worker agents can execute.
 
-Do not commit, push, open PRs, or merge PRs as the Planner Agent.
+Do not commit, push, open PRs, or merge PRs as the Planner Agent. You are in plan mode — read-only.
 
 ## Workflow
 

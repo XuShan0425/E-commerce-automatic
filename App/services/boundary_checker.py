@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field
+
+from App.core.logging import get_logger
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from App.models.base import ProfitAnalysis
+from App.models.cookie import CookieStore
+from App.models.system_state import is_global_stop_active
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -61,7 +64,6 @@ async def check_boundaries(
             )
 
     # ── 硬边界 2: Cookie 已失效 ───────────────────
-    from App.models.cookie import CookieStore
     cookie_result = await db.execute(
         select(CookieStore).where(
             CookieStore.domain == "aliexpress.com",
@@ -93,12 +95,7 @@ async def check_boundaries(
             )
 
     # ── 硬边界 3: 全局停止标志 ────────────────────
-    from App.models.system_state import SystemState
-    stop_result = await db.execute(
-        select(SystemState).where(SystemState.key == "global_stop")
-    )
-    stop_record = stop_result.scalar_one_or_none()
-    if stop_record and stop_record.value.get("enabled"):
+    if await is_global_stop_active(db):
         reasons.append("全局停止已启用")
         return BoundaryResult(
             passed=False,

@@ -7,11 +7,12 @@ import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from App.services.api_interceptor import AdDataInterceptor, CollectedAdData, CollectedPriceData
 from App.core.errors import ErrorCode, error_response
+from App.models.base import AdSnapshot, PriceSnapshot
+from App.models.system_state import is_global_stop_active
 
 if TYPE_CHECKING:
     from App.services.browser import BrowserService
@@ -108,15 +109,8 @@ async def collect_ad_data(
         return error_response(ErrorCode.COOKIE_MISSING, details={"action": "请先执行首次登录"})
 
     # ── 检查全局停止 ──────────────────────────────
-    from App.models.system_state import SystemState
-    stop_result = await db.execute(
-        select(SystemState).where(SystemState.key == "global_stop")
-    )
-    stop_record = stop_result.scalar_one_or_none()
-    if stop_record and stop_record.value.get("enabled"):
-        return error_response(
-            ErrorCode.GLOBAL_STOP, details={"action": "请检查警报中心并清除全局停止"}
-        )
+    if await is_global_stop_active(db):
+        return error_response(ErrorCode.GLOBAL_STOP, details={"action": "请检查警报中心并清除全局停止"})
 
     # ── 在后台线程执行同步浏览器操作 ──────────────
     loop = asyncio.get_event_loop()
@@ -131,7 +125,6 @@ async def collect_ad_data(
         )
 
     # ── 写入数据库 ────────────────────────────────
-    from App.models.base import AdSnapshot, PriceSnapshot
 
     saved_ads = 0
     saved_prices = 0

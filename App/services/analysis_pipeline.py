@@ -2,16 +2,25 @@
 
 from __future__ import annotations
 
-import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
+
+from App.core.logging import get_logger
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from App.models.base import AdSnapshot, Product
+from App.models.base import AdSnapshot, PriceSnapshot, Product
+from App.services.profit_calculator import (
+    _get_ad_snapshots_7d,
+    _get_platform_fee_rate,
+    _get_product,
+    compute_profit,
+)
+from App.services.decision_engine import generate_decision
+from App.services.boundary_checker import check_boundaries
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def analyze_single_sku(
@@ -30,12 +39,6 @@ async def analyze_single_sku(
     Returns:
         完整分析结果 dict
     """
-    from App.services.profit_calculator import (
-        _get_ad_snapshots_7d,
-        _get_platform_fee_rate,
-        _get_product,
-        compute_profit,
-    )
 
     result: dict[str, Any] = {
         "sku_id": sku_id,
@@ -86,7 +89,6 @@ async def analyze_single_sku(
     snapshots_7d = await _get_ad_snapshots_7d(db, sku_id)
     fee_rate = await _get_platform_fee_rate(db, product.category)
 
-    from App.models.base import PriceSnapshot
     price_result = await db.execute(
         select(PriceSnapshot.current_price)
         .where(PriceSnapshot.sku_id == sku_id)
@@ -97,7 +99,6 @@ async def analyze_single_sku(
     current_price = float(price_row) if price_row else float(product.cost_price)
 
     try:
-        from App.services.decision_engine import generate_decision
         decision = await generate_decision(
             db, sku_id,
             cost_price=float(product.cost_price),
@@ -132,7 +133,6 @@ async def analyze_single_sku(
 
     # ── Step 3: 边界检查 ──────────────────────────
     try:
-        from App.services.boundary_checker import check_boundaries
         boundary = await check_boundaries(db, sku_id, decision, profit)
         result["boundary"] = {
             "passed": boundary.passed,
