@@ -48,6 +48,13 @@ Before finishing:
 - Inspect the diff.
 - Summarize verification evidence.
 
+After finishing (MANDATORY):
+
+- Load `agent-post-task` skill and run `python scripts/post-task.py --task <TASK-ID> --pr-label "优化"`.
+- **Do NOT skip PR creation** unless the user explicitly says "no PR".
+- Do not use `--no-pr` by default — the default is to create a PR.
+- If pre-existing lint or doc issues exist, fix them in the same task PR.
+
 ## Task Files
 
 Each task should have a file under `.codex-tasks/`.
