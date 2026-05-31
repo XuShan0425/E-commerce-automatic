@@ -10,6 +10,15 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+class CookieHealth(str, Enum):
+    """Cookie 健康状态枚举。"""
+
+    VALID = "valid"
+    INVALID = "invalid"
+    NO_COOKIE = "no_cookie"
+    ERROR = "error"
+
+
 def _is_login_page(url: str) -> bool:
     """判断当前 URL 是否为登录页面。"""
     return any(pattern in url for pattern in LOGIN_URL_PATTERNS)

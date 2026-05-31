@@ -1,6 +1,6 @@
 ---
 name: agent-worker
-description: Use when executing a specific `.codex-tasks/active/TASK-XXX.md` file. Implements only that task, records evidence, runs verification, commits, pushes, and opens or updates a PR without merging.
+description: Use when executing a specific `.codex-tasks/active/TASK-XXX.md` file (e.g. "run TASK-020-1", "execute task", "implement TASK-XXX"). Implements only that task, records evidence, runs verification, commits, pushes, and opens or updates a PR without merging.
 ---
 
 # Agent Worker Skill

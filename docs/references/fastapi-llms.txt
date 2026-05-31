@@ -1,0 +1,94 @@
+# FastAPI 参考
+
+> 为智能体提供的 FastAPI 模式速查。版本: 0.115+
+
+## 路由定义
+
+```python
+from fastapi import APIRouter
+
+router = APIRouter()
+
+@router.get("/items/{item_id}")
+async def get_item(item_id: int) -> ItemResponse:
+    ...
+```
+
+## 依赖注入
+
+```python
+from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from App.core.database import get_db
+
+@router.post("/items")
+async def create_item(
+    body: ItemCreate,
+    db: AsyncSession = Depends(get_db),
+) -> ItemResponse:
+    ...
+```
+
+## Pydantic Schema 模式
+
+```python
+from pydantic import BaseModel, Field
+
+class ItemCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=500)
+    price: float = Field(..., gt=0)
+
+class ItemResponse(BaseModel):
+    id: int
+    name: str
+    price: float
+    created_at: datetime
+
+    model_config = {"from_attributes": True}  # 允许从 ORM 对象构造
+```
+
+## 错误响应
+
+使用项目的统一错误格式：
+
+```python
+from App.core.errors import error_response, ErrorCode
+
+# 在路由中
+raise HTTPException(status_code=400, detail=error_response(
+    ErrorCode.VALIDATION_ERROR,
+    "SKU ID 格式无效",
+))
+```
+
+## 鉴权
+
+```python
+from App.core.security import verify_api_key
+
+@router.get("/protected")
+async def protected_route(
+    api_key: str = Depends(verify_api_key),
+) -> ...:
+    ...
+```
+
+## 异步数据库操作
+
+```python
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+async def query_example(db: AsyncSession, sku_id: str):
+    result = await db.execute(
+        select(Product).where(Product.sku_id == sku_id)
+    )
+    return result.scalar_one_or_none()
+```
+
+## 常见模式
+
+1. **CRUD**: GET list → GET by id → POST create → PUT update → DELETE
+2. **文件上传**: `async def upload(file: UploadFile = File(...))`
+3. **后台任务**: 不等待的 POST 端点（通过 scheduler 调度）
+4. **分页**: `offset: int = 0, limit: int = 50`

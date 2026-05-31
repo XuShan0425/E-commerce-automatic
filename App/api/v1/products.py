@@ -93,7 +93,9 @@ async def update_product(
 
     update_data = body.model_dump(exclude_unset=True)
     if not update_data:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="没有提供需要更新的字段")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="没有提供需要更新的字段"
+        )
 
     for field, value in update_data.items():
         setattr(product, field, value)
@@ -292,7 +294,11 @@ async def import_csv(
         try:
             cost_price = float(cost_price_str)
         except (ValueError, TypeError):
-            failed_rows.append({"row": idx, "sku_id": sku_id, "error": f"cost_price 无效: {cost_price_str}"})
+            failed_rows.append({
+                "row": idx,
+                "sku_id": sku_id,
+                "error": f"cost_price 无效: {cost_price_str}",
+            })
             continue
 
         if cost_price <= 0:

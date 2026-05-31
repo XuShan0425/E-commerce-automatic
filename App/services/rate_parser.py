@@ -130,7 +130,10 @@ async def confirm_logistics_rates(
     await db.flush()
     logger.info("物流费率确认写入: %d 条 (overwrite=%s)", count, request.overwrite)
 
-    return {"inserted": count if not request.overwrite else 0, "replaced": count if request.overwrite else 0}
+    return {
+        "inserted": count if not request.overwrite else 0,
+        "replaced": count if request.overwrite else 0,
+    }
 
 
 async def confirm_platform_fees(
@@ -152,4 +155,7 @@ async def confirm_platform_fees(
     await db.flush()
     logger.info("平台佣金确认写入: %d 条 (overwrite=%s)", count, request.overwrite)
 
-    return {"inserted": count if not request.overwrite else 0, "replaced": count if request.overwrite else 0}
+    return {
+        "inserted": count if not request.overwrite else 0,
+        "replaced": count if request.overwrite else 0,
+    }

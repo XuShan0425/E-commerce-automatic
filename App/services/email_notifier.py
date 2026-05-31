@@ -168,7 +168,10 @@ async def send_test_email(to: str | None = None) -> tuple[bool, str]:
         ok = await _do_send_to(msg, [to] if to else None)
         if ok:
             return True, "测试邮件已发送，请检查收件箱"
-        return False, f"发送失败 — {settings.SMTP_HOST}:{settings.SMTP_PORT}，用户 {settings.SMTP_USER}"
+        return False, (
+            f"发送失败 — {settings.SMTP_HOST}:{settings.SMTP_PORT}"
+            f"，用户 {settings.SMTP_USER}"
+        )
     except Exception as exc:
         return False, f"发送异常: {exc}"
 

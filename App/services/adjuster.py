@@ -17,6 +17,7 @@ logger = get_logger(__name__)
 # CSP 使用内部 SPA 路由，非独立域名
 PRODUCT_MANAGE_URL = "https://csp.aliexpress.com/m_apps/productManage/list-manage?channelId=363432"
 AD_MANAGE_URL = "https://csp.aliexpress.com/m_apps/p4p-pages/home?p4p_enter_from=sidebar"  # 站内推广(P4P)
+AD_ALL_IN_ONE_URL = "https://csp.aliexpress.com/m_apps/all-in-one-promotion/home"  # 一站式推广
 CSP_HOME_URL = "https://csp.aliexpress.com/"
 
 # ── 选择器字典 (基于 2026-05-31 CSP 实测) ────────

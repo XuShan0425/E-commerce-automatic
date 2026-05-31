@@ -60,7 +60,11 @@ def _run_collection_sync(
         # 逐个访问广告相关页面，等待 API 响应
         for page_url in AD_PAGES:
             try:
-                page.goto(page_url, wait_until="domcontentloaded", timeout=min(30_000, timeout * 1000))
+                page.goto(
+                    page_url,
+                    wait_until="domcontentloaded",
+                    timeout=min(30_000, timeout * 1000),
+                )
                 # 等待额外时间让 XHR/Fetch 请求完成
                 page.wait_for_timeout(max(2_000, timeout * 50))
                 # 滚动页面触发懒加载
