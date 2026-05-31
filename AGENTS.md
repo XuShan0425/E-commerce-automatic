@@ -2,6 +2,8 @@
 
 Human steers. Agents execute. The repository is the source of truth.
 
+> This project also supports **Claude Code**. See `CLAUDE.md` for Claude Code-specific workflow conventions. Skills are available at `.claude/skills/`.
+
 ## Available Skills
 
 This project bundles skills that opencode will auto-invoke when relevant:
@@ -14,7 +16,7 @@ This project bundles skills that opencode will auto-invoke when relevant:
 | `agent-integrator` | Integrating multiple task PRs |
 | `find-skills` | Discovering and installing missing skills |
 
-Skills are loaded from `skills/agents/` and `C:/Users/Tong/.agents/skills/`.
+Skills are loaded from `skills/agents/`, `.claude/skills/`, and `C:/Users/Tong/.agents/skills/`.
 
 ## Context Map
 

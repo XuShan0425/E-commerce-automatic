@@ -112,6 +112,23 @@ else
   echo "appended profile rules: $PROFILE"
 fi
 
+# Create Claude Code hooks.json pointing to the shared Stop hook
+CLAUDE_HOOKS="$TARGET_ROOT/.claude/hooks.json"
+if [[ ! -f "$CLAUDE_HOOKS" || "$FORCE" -eq 1 ]]; then
+  mkdir -p "$(dirname "$CLAUDE_HOOKS")"
+  cat > "$CLAUDE_HOOKS" <<'HOOKSEOF'
+{
+  "Stop": {
+    "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/stop_auto_pr.py\"",
+    "timeout": 1200000
+  }
+}
+HOOKSEOF
+  echo "installed: .claude/hooks.json"
+else
+  echo "skip existing: .claude/hooks.json"
+fi
+
 chmod +x "$TARGET_ROOT/.codex/hooks/stop_auto_pr.py" 2>/dev/null || true
 chmod +x "$TARGET_ROOT/.codex/orchestrator/codex-team.py" 2>/dev/null || true
 chmod +x "$TARGET_ROOT/install-skills.sh" 2>/dev/null || true
@@ -132,7 +149,7 @@ Next steps:
   1. Confirm GitHub CLI authentication:
      gh auth status
 
-  2. Open Codex in this repository and trust project hooks:
+  2. Open Codex or Claude Code in this repository and trust project hooks:
      /hooks
 
   3. Plan work (agent-planner will be auto-invoked):
@@ -140,6 +157,8 @@ Next steps:
 
   4. Run a task (agent-worker will be auto-invoked):
      python3 .codex/orchestrator/codex-team.py run TASK-001
+
+  5. For Claude Code: skills and config are auto-loaded from .claude/skills/ and CLAUDE.md
 
 Installed skills: agent-planner, agent-worker, agent-reviewer,
   agent-integrator, find-skills, gh-address-comments, gh-fix-ci,
