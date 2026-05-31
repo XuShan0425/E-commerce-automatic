@@ -14,6 +14,7 @@ class ProductCreate(BaseModel):
 
 class ProductRead(ProductCreate):
     id: int
+    is_tracked: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -23,6 +24,7 @@ class ProductUpdate(BaseModel):
     name: str | None = Field(None, max_length=500)
     cost_price: float | None = Field(None, gt=0)
     category: str | None = Field(None, max_length=200)
+    is_tracked: bool | None = None
 
 
 class CSVImportResult(BaseModel):
@@ -30,3 +32,8 @@ class CSVImportResult(BaseModel):
     total_rows: int
     success_count: int
     failed_rows: list[dict]  # [{row: 行号, sku_id: "xxx", error: "错误描述"}, ...]
+
+
+class ProductToggleTracking(BaseModel):
+    """Toggle tracking on/off for a single product."""
+    is_tracked: bool

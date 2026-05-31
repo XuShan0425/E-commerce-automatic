@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import { useApp } from '../contexts/AppContext';
 import { StatusBadge } from '../components/StatusBadge';
@@ -104,9 +104,8 @@ export function Logs() {
             </thead>
             <tbody>
               {logs.map(log => (
-                <>
+                <React.Fragment key={log.id}>
                   <tr
-                    key={log.id}
                     className="border-t hover:bg-gray-50 cursor-pointer"
                     onClick={() => toggleExpand(log.id)}
                   >
@@ -128,13 +127,13 @@ export function Logs() {
                     </td>
                   </tr>
                   {expanded.has(log.id) && log.ai_reasoning && (
-                    <tr key={`${log.id}-reason`}>
+                    <tr>
                       <td colSpan={6} className="px-4 py-3 bg-blue-50 text-sm text-gray-700">
                         <strong>AI 推理:</strong> {log.ai_reasoning}
                       </td>
                     </tr>
                   )}
-                </>
+                </React.Fragment>
               ))}
             </tbody>
           </table>

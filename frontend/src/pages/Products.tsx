@@ -1,6 +1,9 @@
 import { useEffect, useState, useRef } from 'react';
 import { api } from '../api/client';
 import { useApp } from '../contexts/AppContext';
+import { ProductModal } from '../components/ProductModal';
+import { CsvPreviewModal } from '../components/CsvPreviewModal';
+import { StoreProductModal } from '../components/StoreProductModal';
 
 interface Product {
   id: number;
@@ -8,6 +11,7 @@ interface Product {
   name: string;
   cost_price: number;
   category: string | null;
+  is_tracked: boolean;
   created_at: string;
 }
 
@@ -29,15 +33,37 @@ export function Products() {
   const { addToast } = useApp();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [tab, setTab] = useState<'products' | 'logistics' | 'fees'>('products');
+  const [tab, setTab] = useState<'products' | 'logistics' | 'fees' | 'select'>('products');
   const [products, setProducts] = useState<Product[]>([]);
   const [logistics, setLogistics] = useState<LogisticsRate[]>([]);
   const [fees, setFees] = useState<PlatformFee[]>([]);
   const [loading, setLoading] = useState(true);
+  const [trackedFilter, setTrackedFilter] = useState('');
+
+  // selection tab state
+  const [allProducts, setAllProducts] = useState<Product[]>([]);
+  const [selectSearch, setSelectSearch] = useState('');
+  const [checked, setChecked] = useState<Set<number>>(new Set());
+  const [selectDirty, setSelectDirty] = useState(false);
+  const [selectSaving, setSelectSaving] = useState(false);
+
+  // product modal state
+  const [prodModal, setProdModal] = useState<{
+    open: boolean; mode: 'create' | 'edit'; product?: Product;
+  }>({ open: false, mode: 'create' });
+
+  // csv preview modal state
+  const [csvPreview, setCsvPreview] = useState<{
+    open: boolean; products: Product[];
+  }>({ open: false, products: [] });
+
+  // store product modal state
+  const [storeModalOpen, setStoreModalOpen] = useState(false);
 
   // ── 加载数据 ──
-  async function loadProducts() {
-    const data = await api.get<Product[]>('/products/').catch(() => []);
+  async function loadProducts(filter?: string) {
+    const query = filter ? `?tracked=${filter}` : '';
+    const data = await api.get<Product[]>(`/products/${query}`).catch(() => []);
     setProducts(data);
   }
   async function loadLogistics() {
@@ -54,34 +80,78 @@ export function Products() {
     Promise.all([loadProducts(), loadLogistics(), loadFees()]).finally(() => setLoading(false));
   }, []);
 
-  // ── Products CRUD ──
-  async function handleCreateProduct() {
-    const sku = prompt('SKU ID:');
-    if (!sku) return;
-    const name = prompt('商品名称:');
-    if (!name) return;
-    const cost = prompt('成本价 (USD):');
-    if (!cost) return;
-    const cat = prompt('类目 (可选):');
-    try {
-      await api.post('/products/', { sku_id: sku, name, cost_price: +cost, category: cat || null });
-      addToast('商品已创建', 'success');
-      loadProducts();
-    } catch (e: any) {
-      addToast(e.message, 'error');
-    }
+  useEffect(() => {
+    if (tab === 'select') initSelectionTab();
+  }, [tab]);
+
+  // ── 选择跟踪标签页 ──
+  async function initSelectionTab() {
+    const data = await api.get<Product[]>('/products/').catch(() => []);
+    setAllProducts(data);
+    setChecked(new Set(data.filter(p => p.is_tracked).map(p => p.id)));
+    setSelectDirty(false);
   }
 
-  async function handleUpdateProduct(p: Product) {
-    const cost = prompt('新成本价 (USD):', String(p.cost_price));
-    if (!cost) return;
+  function toggleCheck(id: number) {
+    setChecked(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+    setSelectDirty(true);
+  }
+
+  function selectAll() {
+    const filtered = filteredSelection.length;
+    const selected = filteredSelection.filter(p => checked.has(p.id)).length;
+    if (selected === filtered && filtered > 0) {
+      setChecked(prev => { const n = new Set(prev); filteredSelection.forEach(p => n.delete(p.id)); return n; });
+    } else {
+      setChecked(prev => { const n = new Set(prev); filteredSelection.forEach(p => n.add(p.id)); return n; });
+    }
+    setSelectDirty(true);
+  }
+
+  async function handleBatchSave() {
+    setSelectSaving(true);
     try {
-      await api.put(`/products/${p.id}`, { cost_price: +cost });
-      addToast('已更新', 'success');
-      loadProducts();
+      const trackedIds: number[] = [];
+      const untrackedIds: number[] = [];
+      for (const p of allProducts) {
+        if (checked.has(p.id) && !p.is_tracked) trackedIds.push(p.id);
+        if (!checked.has(p.id) && p.is_tracked) untrackedIds.push(p.id);
+      }
+      if (trackedIds.length === 0 && untrackedIds.length === 0) {
+        addToast('没有变更', 'info');
+        setSelectSaving(false);
+        return;
+      }
+      await api.post('/products/batch-set-tracking', { tracked_ids: trackedIds, untracked_ids: untrackedIds });
+      addToast(`已更新: ${trackedIds.length} 件设为跟踪, ${untrackedIds.length} 件取消跟踪`, 'success');
+      setSelectDirty(false);
+      loadProducts(trackedFilter);
+      initSelectionTab();
     } catch (e: any) {
       addToast(e.message, 'error');
     }
+    setSelectSaving(false);
+  }
+
+  const filteredSelection = allProducts.filter(p =>
+    !selectSearch ||
+    p.sku_id.toLowerCase().includes(selectSearch.toLowerCase()) ||
+    p.name.toLowerCase().includes(selectSearch.toLowerCase())
+  );
+  const selectedCount = allProducts.filter(p => checked.has(p.id)).length;
+  const totalTracked = allProducts.filter(p => p.is_tracked).length;
+
+  // ── Products CRUD ──
+  function handleCreateProduct() {
+    setProdModal({ open: true, mode: 'create' });
+  }
+
+  function handleUpdateProduct(p: Product) {
+    setProdModal({ open: true, mode: 'edit', product: p });
   }
 
   async function handleDeleteProduct(id: number) {
@@ -89,7 +159,19 @@ export function Products() {
     try {
       await api.delete(`/products/${id}`);
       addToast('已删除', 'success');
-      loadProducts();
+      loadProducts(trackedFilter);
+    } catch (e: any) {
+      addToast(e.message, 'error');
+    }
+  }
+
+  async function handleToggleTracked(p: Product) {
+    try {
+      const updated = await api.put<Product>(`/products/${p.id}/toggle-tracked`, {
+        is_tracked: !p.is_tracked,
+      });
+      setProducts(prev => prev.map(x => x.id === p.id ? updated : x));
+      addToast(p.is_tracked ? '已取消跟踪' : '已设为跟踪', 'success');
     } catch (e: any) {
       addToast(e.message, 'error');
     }
@@ -105,12 +187,20 @@ export function Products() {
       );
       addToast(`导入完成: ${result.success_count}/${result.total_rows}`, 'success');
       if (result.failed_rows?.length) {
-        result.failed_rows.forEach(r => addToast(`行${r.row}: ${r.error}`, 'error'));
+        result.failed_rows.forEach((r: any) => addToast(`行${r.row}: ${r.error}`, 'error'));
       }
-      loadProducts();
+      // fetch all products to find newly imported ones (is_tracked=false)
+      const allProducts = await api.get<Product[]>('/products/');
+      const newProducts = allProducts.filter(p => !p.is_tracked);
+      if (newProducts.length > 0) {
+        setCsvPreview({ open: true, products: newProducts });
+      }
+      loadProducts(trackedFilter);
     } catch (er: any) {
       addToast(er.message, 'error');
     }
+    // reset file input so same file can be re-uploaded
+    if (fileInputRef.current) fileInputRef.current.value = '';
   }
 
   // ── AI 解析费率 ──
@@ -158,6 +248,7 @@ export function Products() {
       <div className="flex gap-1 mb-4 bg-white rounded-lg shadow-sm p-1 w-fit">
         {[
           ['products', '商品列表'],
+          ['select', '管理跟踪'],
           ['logistics', '物流费率'],
           ['fees', '平台佣金'],
         ].map(([key, label]) => (
@@ -176,14 +267,26 @@ export function Products() {
       {/* ── 商品列表 ── */}
       {tab === 'products' && (
         <>
-          <div className="flex items-center gap-3 mb-4">
+          <div className="flex items-center gap-3 mb-4 flex-wrap">
             <button onClick={handleCreateProduct} className="px-4 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">
               + 添加商品
             </button>
             <button onClick={() => fileInputRef.current?.click()} className="px-4 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-700">
               导入 CSV
             </button>
+            <button onClick={() => setStoreModalOpen(true)} className="px-4 py-1.5 bg-purple-600 text-white rounded text-sm hover:bg-purple-700">
+              获取店铺商品
+            </button>
             <input ref={fileInputRef} type="file" accept=".csv,.tsv,.txt" onChange={handleCSVUpload} className="hidden" />
+            <select
+              value={trackedFilter}
+              onChange={e => { setTrackedFilter(e.target.value); loadProducts(e.target.value); }}
+              className="ml-auto px-3 py-1.5 border border-gray-300 rounded text-sm outline-none"
+            >
+              <option value="">全部商品</option>
+              <option value="true">已跟踪</option>
+              <option value="false">未跟踪</option>
+            </select>
           </div>
           {products.length === 0 ? (
             <div className="bg-white rounded-lg shadow p-8 text-center text-gray-400">
@@ -194,6 +297,7 @@ export function Products() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-gray-50 text-gray-500 text-left">
+                    <th className="px-4 py-2 w-10">跟踪</th>
                     <th className="px-4 py-2">SKU ID</th>
                     <th className="px-4 py-2">名称</th>
                     <th className="px-4 py-2">成本 (USD)</th>
@@ -204,7 +308,27 @@ export function Products() {
                 <tbody>
                   {products.map(p => (
                     <tr key={p.id} className="border-t hover:bg-gray-50">
-                      <td className="px-4 py-2 font-mono text-xs">{p.sku_id}</td>
+                      <td className="px-4 py-2">
+                        <button
+                          onClick={() => handleToggleTracked(p)}
+                          className={`w-9 h-5 rounded-full relative transition-colors focus:outline-none ${
+                            p.is_tracked ? 'bg-green-500' : 'bg-gray-300'
+                          }`}
+                          title={p.is_tracked ? '已跟踪，点击取消' : '未跟踪，点击跟踪'}
+                        >
+                          <span
+                            className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
+                              p.is_tracked ? 'translate-x-4' : 'translate-x-0.5'
+                            }`}
+                          />
+                        </button>
+                      </td>
+                      <td className="px-4 py-2 font-mono text-xs flex items-center gap-1.5">
+                        {p.is_tracked && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0" title="跟踪中" />
+                        )}
+                        {p.sku_id}
+                      </td>
                       <td className="px-4 py-2">{p.name}</td>
                       <td className="px-4 py-2">${p.cost_price.toFixed(2)}</td>
                       <td className="px-4 py-2">{p.category || '-'}</td>
@@ -219,6 +343,128 @@ export function Products() {
             </div>
           )}
         </>
+      )}
+
+      {/* ── 管理跟踪 ── */}
+      {tab === 'select' && (
+        <div>
+          {/* 统计栏 */}
+          <div className="grid grid-cols-3 gap-3 mb-4">
+            <div className="bg-white rounded-lg shadow p-3 text-center">
+              <div className="text-xs text-gray-400">总商品数</div>
+              <div className="text-xl font-bold text-gray-700">{allProducts.length}</div>
+            </div>
+            <div className="bg-white rounded-lg shadow p-3 text-center">
+              <div className="text-xs text-gray-400">当前跟踪</div>
+              <div className="text-xl font-bold text-green-600">{totalTracked}</div>
+            </div>
+            <div className="bg-white rounded-lg shadow p-3 text-center">
+              <div className="text-xs text-gray-400">已选</div>
+              <div className="text-xl font-bold text-blue-600">{selectedCount}</div>
+            </div>
+          </div>
+
+          {/* 搜索 + 操作栏 */}
+          <div className="flex items-center gap-3 mb-4 flex-wrap">
+            <input
+              type="text"
+              placeholder="搜索 SKU / 名称..."
+              value={selectSearch}
+              onChange={e => setSelectSearch(e.target.value)}
+              className="px-3 py-1.5 border border-gray-300 rounded text-sm outline-none focus:ring-2 focus:ring-blue-500 w-56"
+            />
+            <button
+              onClick={selectAll}
+              className="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50"
+            >
+              {filteredSelection.length > 0 && filteredSelection.every(p => checked.has(p.id))
+                ? '取消全选'
+                : '全选当前'}
+            </button>
+            <button
+              onClick={handleBatchSave}
+              disabled={!selectDirty || selectSaving}
+              className="px-4 py-1.5 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {selectSaving ? '保存中...' : `保存变更${selectDirty ? ' ●' : ''}`}
+            </button>
+            <span className="text-xs text-gray-400 ml-auto">
+              已选 {filteredSelection.filter(p => checked.has(p.id)).length}/{filteredSelection.length} 项
+            </span>
+          </div>
+
+          {/* 商品选择列表 */}
+          {allProducts.length === 0 ? (
+            <div className="bg-white rounded-lg shadow p-8 text-center text-gray-400">
+              暂无商品 — 先在「商品列表」中添加商品
+            </div>
+          ) : filteredSelection.length === 0 ? (
+            <div className="bg-white rounded-lg shadow p-8 text-center text-gray-400">
+              没有匹配的商品
+            </div>
+          ) : (
+            <div className="bg-white rounded-lg shadow overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50 text-gray-500 text-left">
+                    <th className="px-4 py-2 w-10">
+                      <input
+                        type="checkbox"
+                        checked={filteredSelection.length > 0 && filteredSelection.every(p => checked.has(p.id))}
+                        onChange={selectAll}
+                        className="rounded"
+                      />
+                    </th>
+                    <th className="px-4 py-2">SKU ID</th>
+                    <th className="px-4 py-2">名称</th>
+                    <th className="px-4 py-2">成本 (USD)</th>
+                    <th className="px-4 py-2">类目</th>
+                    <th className="px-4 py-2">状态</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredSelection.map(p => {
+                    const isChecked = checked.has(p.id);
+                    const willChange = isChecked !== p.is_tracked;
+                    return (
+                      <tr
+                        key={p.id}
+                        onClick={() => toggleCheck(p.id)}
+                        className={`border-t cursor-pointer transition-colors ${
+                          willChange ? 'bg-amber-50 hover:bg-amber-100' : 'hover:bg-gray-50'
+                        }`}
+                      >
+                        <td className="px-4 py-2">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => toggleCheck(p.id)}
+                            className="rounded"
+                          />
+                        </td>
+                        <td className="px-4 py-2 font-mono text-xs">{p.sku_id}</td>
+                        <td className="px-4 py-2">{p.name}</td>
+                        <td className="px-4 py-2">${p.cost_price.toFixed(2)}</td>
+                        <td className="px-4 py-2 text-xs">{p.category || '-'}</td>
+                        <td className="px-4 py-2">
+                          {willChange ? (
+                            isChecked
+                              ? <span className="text-green-600 text-xs font-medium">将开始跟踪</span>
+                              : <span className="text-red-500 text-xs">将停止跟踪</span>
+                          ) : (
+                            isChecked
+                              ? <span className="text-green-600 text-xs">跟踪中</span>
+                              : <span className="text-gray-400 text-xs">未跟踪</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       )}
 
       {/* ── 物流费率 ── */}
@@ -286,6 +532,35 @@ export function Products() {
           )}
         </>
       )}
+
+      {/* Modals */}
+      <ProductModal
+        open={prodModal.open}
+        mode={prodModal.mode}
+        product={prodModal.product}
+        onClose={() => setProdModal({ open: false, mode: 'create' })}
+        onSuccess={() => {
+          loadProducts(trackedFilter);
+          setProdModal({ open: false, mode: 'create' });
+        }}
+      />
+      <CsvPreviewModal
+        open={csvPreview.open}
+        products={csvPreview.products}
+        onClose={() => setCsvPreview({ open: false, products: [] })}
+        onConfirm={() => {
+          loadProducts(trackedFilter);
+          setCsvPreview({ open: false, products: [] });
+        }}
+      />
+      <StoreProductModal
+        open={storeModalOpen}
+        onClose={() => setStoreModalOpen(false)}
+        onSuccess={() => {
+          setStoreModalOpen(false);
+          loadProducts(trackedFilter);
+        }}
+      />
     </div>
   );
 }

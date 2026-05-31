@@ -85,15 +85,7 @@ async def analyze_single_sku(
 
     snapshots_7d = await _get_ad_snapshots_7d(db, sku_id)
     fee_rate = await _get_platform_fee_rate(db, product.category)
-    current_price = float(
-        # Get latest price or fallback
-        (await db.execute(
-            select(AdSnapshot.revenue).where(
-                AdSnapshot.sku_id == sku_id,
-            ).order_by(AdSnapshot.snapshot_time.desc()).limit(1)
-        )).scalar_one_or_none() or 0
-    )
-    # Better: get from price_snapshots or from product
+
     from App.models.base import PriceSnapshot
     price_result = await db.execute(
         select(PriceSnapshot.current_price)
@@ -175,7 +167,7 @@ async def analyze_all_skus(
     Returns:
         {"total": int, "analyzed": int, "results": list[dict], "summary": dict}
     """
-    result = await db.execute(select(Product))
+    result = await db.execute(select(Product).where(Product.is_tracked == True))
     products = list(result.scalars().all())
 
     if not products:
