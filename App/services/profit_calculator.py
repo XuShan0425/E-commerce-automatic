@@ -96,7 +96,11 @@ async def _compute_logistics_cost(
         # 尝试匹配地区
         region_upper = region_key.upper()
         try:
-            proportion_value = float(proportion) if not isinstance(proportion, (int, float)) else proportion
+            proportion_value = (
+                float(proportion)
+                if not isinstance(proportion, (int, float))
+                else proportion
+            )
         except (ValueError, TypeError):
             proportion_value = 0.0
 

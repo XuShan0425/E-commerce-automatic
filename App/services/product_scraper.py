@@ -79,6 +79,8 @@ class _InterceptedProduct:
     name: str = ""
     current_price: float = 0.0
     category: str = ""
+    listing_time: str = ""
+    group_display: str = ""
 
 
 @dataclass
@@ -183,12 +185,37 @@ def _extract_product_item(obj: dict, state: _InterceptState) -> None:
                 category = str(obj[k]).strip()
                 break
 
+    # ── Listing Time (上架时间) ───────────────
+    listing_time = ""
+    for k in (
+        "gmtCreate", "gmt_create", "createTime", "create_time",
+        "createTimeStr", "create_time_str", "listingTime", "listing_time",
+        "gmtModified", "gmt_modified",
+    ):
+        v = obj.get(k)
+        if v and isinstance(v, str):
+            listing_time = v.strip()
+            break
+        if isinstance(v, (int, float)) and v > 0:
+            listing_time = str(v).strip()
+            break
+
+    # ── Group (商品分组) ─────────────────────
+    group_name = ""
+    for k in ("groupName", "group_name", "productGroup", "product_group"):
+        v = obj.get(k)
+        if v and isinstance(v, str):
+            group_name = v.strip()
+            break
+
     if pid and name:
         state.products.append(_InterceptedProduct(
             sku_id=pid,
             name=name[:300],
             current_price=price,
             category=category[:200],
+            listing_time=listing_time,
+            group_display=group_name,
         ))
 
 
@@ -345,6 +372,8 @@ def _run_scrape_sync(
                         "name": p.name,
                         "current_price": p.current_price,
                         "category": p.category,
+                        "listing_time": p.listing_time,
+                        "group": p.group_display or p.category,
                     })
             result["_extract_method"] = "api_intercept"
 
@@ -536,6 +565,23 @@ def _extract_from_ait_dom(page) -> list[dict]:
                 if (cat.length > 2) category = cat;
             }
 
+            // ── 上架时间提取 ────────────────
+            let listingTime = '';
+            const createMatch = text.match(/创建[：:]\\s*(\\S+)/);
+            if (createMatch) {
+                listingTime = createMatch[1].trim();
+            }
+
+            // ── 分组提取 ─────────────────────
+            let groupName = '';
+            const groupMatch = text.match(/商品分组[：:]\\s*(\\S+)/);
+            if (groupMatch) {
+                groupName = groupMatch[1].trim();
+            }
+            if (!groupName && category) {
+                groupName = category;
+            }
+
             // 去重
             if (!seen.has(sku) && name.length >= 3) {
                 seen.add(sku);
@@ -544,6 +590,8 @@ def _extract_from_ait_dom(page) -> list[dict]:
                     name: name.slice(0, 300),
                     current_price: price,
                     category: category.slice(0, 200),
+                    listing_time: listingTime,
+                    group: groupName.slice(0, 200),
                 });
             }
         });
@@ -657,12 +705,20 @@ def _extract_from_inner_text(page) -> list[dict]:
             # 清理末尾噪音标记
             category = re.sub(r"\s*(?:USD|更多分组|区域零售价).*$", "", category).strip()
 
+        # 上架时间: "创建：{time}" from trailing
+        listing_time = ""
+        create_match = re.search(r"创建[：:]\s*(\S+)", trailing)
+        if create_match:
+            listing_time = create_match.group(1).strip()
+
         if name and len(name) >= 3:
             products.append({
                 "sku_id": pid,
                 "name": name[:300],
                 "current_price": price,
                 "category": category[:200],
+                "listing_time": listing_time,
+                "group": category[:200],
             })
 
     return products

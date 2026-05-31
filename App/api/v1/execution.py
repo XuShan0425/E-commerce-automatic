@@ -176,7 +176,11 @@ async def reject_pending_op(
 @router.get("/logs")
 async def get_execution_logs(
     sku_id: str | None = Query(None, description="按 SKU 筛选"),
-    status_filter: str | None = Query(None, alias="status", description="按状态筛选: success/failed/pending_confirmation/rejected"),
+    status_filter: str | None = Query(
+        None,
+        alias="status",
+        description="按状态筛选: success/failed/pending_confirmation/rejected",
+    ),
     operation_type: str | None = Query(None, description="按操作类型筛选"),
     limit: int = Query(100, ge=1, le=500, description="返回条数上限"),
     _api_key: str = Depends(verify_api_key),

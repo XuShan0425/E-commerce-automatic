@@ -72,7 +72,9 @@ async def update_logistics_rate(
 
     update_data = body.model_dump(exclude_unset=True)
     if not update_data:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="没有提供需要更新的字段")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="没有提供需要更新的字段"
+        )
 
     for field, value in update_data.items():
         setattr(rate, field, value)
