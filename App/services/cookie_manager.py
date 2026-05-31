@@ -41,7 +41,10 @@ class CookieManager:
         return record
 
     async def load_cookies(self, domain: str) -> list[dict]:
-        """读取指定域名的已保存 Cookie。返回空列表如果不存在或已失效。"""
+        """读取指定域名的已保存 Cookie。返回空列表如果不存在或已失效。
+
+        增加容错处理：cookies_json 可能为损坏数据，返回空列表而非崩溃。
+        """
         result = await self._db.execute(
             select(CookieStore).where(
                 CookieStore.domain == domain,
@@ -51,8 +54,13 @@ class CookieManager:
         record = result.scalar_one_or_none()
         if record is None:
             return []
-        cookies = record.cookies_json
-        return cookies if isinstance(cookies, list) else []
+        try:
+            cookies = record.cookies_json
+            if isinstance(cookies, list):
+                return cookies
+        except Exception:
+            pass
+        return []
 
     async def mark_invalid(self, domain: str) -> None:
         """标记 Cookie 为失效。"""

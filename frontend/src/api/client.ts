@@ -16,6 +16,26 @@ export function clearApiKey() {
   localStorage.removeItem('api_key');
 }
 
+export interface ApiErrorDetail {
+  code: string;
+  message: string;
+  suggestion?: string;
+}
+
+export class ApiError extends Error {
+  status: number;
+  code: string;
+  suggestion?: string;
+
+  constructor(status: number, code: string, message: string, suggestion?: string) {
+    super(message);
+    this.status = status;
+    this.code = code;
+    this.suggestion = suggestion;
+    this.name = 'ApiError';
+  }
+}
+
 async function request<T>(
   method: string,
   path: string,
@@ -40,18 +60,28 @@ async function request<T>(
   const res = await fetch(`${API_BASE}${path}`, init);
 
   if (res.status === 401) {
-    // 不再自动清除 key — 可能是暂时的，让 ApiKeyGuard 处理
-    throw new ApiError(401, 'API Key 无效，请在登录页重新设置');
+    throw new ApiError(401, 'AUTH_INVALID', 'API Key 无效，请在登录页重新设置', '请检查或重新输入 API Key');
   }
 
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     let detail = text;
+    let code = 'UNKNOWN';
+    let suggestion: string | undefined;
+
     try {
       const j = JSON.parse(text);
-      detail = j.detail || text;
+      // 新格式: {"error": {"code": "...", "message": "...", "suggestion": "..."}}
+      if (j.error && typeof j.error === 'object') {
+        code = j.error.code || 'UNKNOWN';
+        detail = j.error.message || text;
+        suggestion = j.error.suggestion;
+      } else if (j.detail) {
+        detail = j.detail;
+        code = 'INTERNAL_ERROR';
+      }
     } catch { /* not json */ }
-    throw new ApiError(res.status, detail);
+    throw new ApiError(res.status, code, detail, suggestion);
   }
 
   if (res.status === 204 || options?.rawResponse) {
@@ -59,15 +89,6 @@ async function request<T>(
   }
 
   return res.json();
-}
-
-export class ApiError extends Error {
-  status: number;
-  constructor(status: number, message: string) {
-    super(message);
-    this.status = status;
-    this.name = 'ApiError';
-  }
 }
 
 // ── 便捷方法 ────────────────────────────────────

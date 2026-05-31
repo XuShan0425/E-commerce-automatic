@@ -20,6 +20,7 @@ class CookieHealth(str, Enum):
     INVALID = "invalid"
     ERROR = "error"
     NO_COOKIE = "no_cookie"
+    EXPIRING = "expiring"  # 即将过期（24 小时内）
 
 
 # 速卖通卖家中心 URL（Cookie 有效时的目标页面）
@@ -31,6 +32,27 @@ LOGIN_URL_PATTERNS = ["login.aliexpress.com", "passport.aliexpress.com"]
 def _is_login_page(url: str) -> bool:
     """判断当前 URL 是否为登录页面。"""
     return any(pattern in url for pattern in LOGIN_URL_PATTERNS)
+
+
+from App.core.database import Base
+
+
+def _detect_cookie_expiry(cookies: list[dict]) -> int | None:
+    """检测 Cookie 中最早过期的天数（负数表示已过期）。返回 None 表示无过期信息。"""
+    now = datetime.now(timezone.utc)
+    min_days = None
+    for c in cookies:
+        expires = c.get("expires")
+        if expires is None or expires <= 0:
+            continue
+        try:
+            exp_time = datetime.fromtimestamp(expires, tz=timezone.utc)
+            days = (exp_time - now).total_seconds() / 86400
+            if min_days is None or days < min_days:
+                min_days = days
+        except Exception:
+            continue
+    return min_days
 
 
 async def check_cookie_health(
@@ -97,8 +119,10 @@ async def get_system_status(
 
     cookies = await cookie_manager.load_cookies("aliexpress.com")
     cookie_valid = len(cookies) > 0
+    days_remaining = _detect_cookie_expiry(cookies) if cookies else None
 
     return {
         "global_stop": global_stop,
         "cookie_valid": cookie_valid,
+        "cookie_days_remaining": days_remaining,
     }

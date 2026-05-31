@@ -13,30 +13,95 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# ── 速卖通后台页面 URL ──────────────────────────
-AD_MANAGE_URL = "https://ad.aliexpress.com/campaign/manage"
-PRODUCT_MANAGE_URL = "https://gsp.aliexpress.com/apps/product/manage"
+# ── 速卖通后台页面 URL (2026-05-31 实测) ────────
+# CSP 使用内部 SPA 路由，非独立域名
+PRODUCT_MANAGE_URL = "https://csp.aliexpress.com/m_apps/productManage/list-manage?channelId=363432"
+AD_MANAGE_URL = "https://csp.aliexpress.com/m_apps/p4p-pages/home?p4p_enter_from=sidebar"  # 站内推广(P4P)
+AD_ALL_IN_ONE_URL = "https://csp.aliexpress.com/m_apps/all-in-one-promotion/home"  # 一站式推广
+CSP_HOME_URL = "https://csp.aliexpress.com/"
 
-# ── 选择器字典（需根据实际页面更新）──────────────
-# 这些选择器是占位符，实际使用时需根据速卖通后台 DOM 调整
-SELECTORS: dict[str, str] = {
-    # 广告管理页
-    "ad_campaign_row": "tr[data-campaign-id]",
-    "ad_sku_cell": "td.sku-id",
-    "budget_input": "input[name='dailyBudget']",
-    "daily_budget_input": "input.budget-amount",
-    "budget_save_btn": "button:has-text('Save'), button:has-text('保存')",
-    "campaign_status_btn": "button.status-toggle",
-    "stop_campaign_btn": "button:has-text('Pause'), button:has-text('暂停')",
-    "ad_type_selector": "select[name='adType'], .ad-type-select",
-    # 商品管理页
-    "product_list_table": ".product-table",
-    "price_input": "input[name='price']",
-    "price_save_btn": "button:has-text('Save'), button:has-text('保存')",
-    # 通用
-    "confirm_btn": ".modal button.confirm, button:has-text('OK'), button:has-text('确定')",
-    "success_toast": ".toast.success, .message.success, .alert-success",
-    "error_toast": ".toast.error, .message.error, .alert-error",
+# ── 选择器字典 (基于 2026-05-31 CSP 实测) ────────
+# CSP 使用 @alifd/next AIT 组件库: ait-btn, ait-table-cell, ait-input 等
+SELECTORS: dict[str, list[str]] = {
+    # ── 商品管理页 (已验证) ──────────────────
+    "product_table": [
+        ".ait-scene-table-bottom",
+        ".ait-card-pure",
+        "[class*=\"ait-table\"]",
+    ],
+    "product_row": [
+        "[class*=\"ait-table-row\"]",
+        ".ait-scene-table-bottom tr",
+        "[data-row-key]",
+    ],
+    "product_name_cell": [
+        "td:nth-child(2) a",
+        "[class*=\"ait-table-cell-fix-left-last\"] a",
+        "a[class*=\"product\"]",
+    ],
+    "price_input": [
+        ".ait-input[placeholder*=\"价格\"]",
+        "input[placeholder*=\"价格\"]",
+        "input[name*=\"price\"]",
+        "input.ait-input",
+    ],
+    "search_input": [
+        ".ait-input[placeholder*=\"商品ID\"]",
+        "input[placeholder*=\"商品ID\"]",
+    ],
+    # ── 通用按钮 (AIT 组件) ─────────────────
+    "save_btn": [
+        "button:has-text('保存')",
+        ".ait-btn:has-text('保存')",
+        "button:has-text('确认')",
+        ".ait-btn-primary:has-text('确定')",
+    ],
+    "edit_btn": [
+        ".ait-btn-link:has-text('编辑')",
+        "button:has-text('编辑')",
+    ],
+    "confirm_btn": [
+        ".ait-btn-primary:has-text('确定')",
+        "button:has-text('确定')",
+        "button:has-text('OK')",
+        ".ait-modal button.ait-btn-primary",
+    ],
+    "cancel_btn": [
+        "button:has-text('取消')",
+        ".ait-btn:has-text('取消')",
+    ],
+    # ── 广告管理页 (待实测验证) ─────────────
+    "ad_campaign_row": [
+        "[data-row-key]",
+        "[class*=\"campaign\"]",
+        "tr[class*=\"row\"]",
+    ],
+    "budget_input": [
+        "input[placeholder*=\"预算\"]",
+        "input[name*=\"budget\"]",
+        "input.ait-input",
+    ],
+    "stop_campaign_btn": [
+        "button:has-text('暂停')",
+        ".ait-btn:has-text('暂停')",
+        "button:has-text('Pause')",
+    ],
+    "ad_type_selector": [
+        "select.ait-select",
+        "[class*=\"ait-select\"]",
+        "select[name*=\"type\"]",
+    ],
+    # ── 通用 ───────────────────────────────
+    "success_toast": [
+        ".ait-message-success",
+        ".ait-notification-success",
+        "[class*=\"success\"]",
+    ],
+    "error_toast": [
+        ".ait-message-error",
+        ".ait-notification-error",
+        "[class*=\"error\"]",
+    ],
 }
 
 # ── 反爬策略 ────────────────────────────────────
@@ -49,35 +114,47 @@ def _random_delay() -> int:
     return random.randint(MIN_DELAY_MS, MAX_DELAY_MS)
 
 
-def _safe_click(page, selector: str, timeout: int = 10_000) -> bool:
-    """安全点击：等待元素可见 → 滚动到视口 → 点击。"""
+def _page_ready(page, timeout: int = 15_000) -> bool:
+    """等待页面就绪：网络空闲 + DOM 稳定。"""
     try:
-        page.wait_for_selector(selector, state="visible", timeout=timeout)
-        page.locator(selector).first.scroll_into_view_if_needed()
-        page.wait_for_timeout(_random_delay())
-        page.locator(selector).first.click()
-        page.wait_for_timeout(_random_delay())
+        page.wait_for_load_state("networkidle", timeout=timeout)
+        page.wait_for_timeout(1_000)
         return True
-    except Exception as exc:
-        logger.error("点击失败: selector=%s error=%s", selector, exc)
+    except Exception:
         return False
 
 
-def _safe_fill(page, selector: str, value: str, timeout: int = 10_000) -> bool:
-    """安全填充：等待输入框 → 清空 → 输入。"""
-    try:
-        page.wait_for_selector(selector, state="visible", timeout=timeout)
-        locator = page.locator(selector).first
-        locator.scroll_into_view_if_needed()
-        page.wait_for_timeout(_random_delay())
-        locator.fill("")
-        page.wait_for_timeout(300)
-        locator.fill(value)
-        page.wait_for_timeout(_random_delay())
-        return True
-    except Exception as exc:
-        logger.error("填充失败: selector=%s error=%s", selector, exc)
-        return False
+def _safe_click(page, selectors: list[str], timeout: int = 10_000) -> bool:
+    """安全点击：尝试多个选择器，第一个成功即返回。"""
+    for selector in selectors:
+        try:
+            page.wait_for_selector(selector, state="visible", timeout=timeout)
+            page.locator(selector).first.scroll_into_view_if_needed()
+            page.wait_for_timeout(_random_delay())
+            page.locator(selector).first.click()
+            page.wait_for_timeout(_random_delay())
+            return True
+        except Exception:
+            continue
+    return False
+
+
+def _safe_fill(page, selectors: list[str], value: str, timeout: int = 10_000) -> bool:
+    """安全填充：尝试多个选择器，第一个成功即返回。"""
+    for selector in selectors:
+        try:
+            page.wait_for_selector(selector, state="visible", timeout=timeout)
+            locator = page.locator(selector).first
+            locator.scroll_into_view_if_needed()
+            page.wait_for_timeout(_random_delay())
+            locator.fill("")
+            page.wait_for_timeout(300)
+            locator.fill(value)
+            page.wait_for_timeout(_random_delay())
+            return True
+        except Exception:
+            continue
+    return False
 
 
 def execute_adjust_bid(
@@ -105,19 +182,18 @@ def execute_adjust_bid(
     try:
         page = context.new_page()
         page.goto(AD_MANAGE_URL, wait_until="domcontentloaded", timeout=30_000)
+        _page_ready(page)
         page.wait_for_timeout(3_000)
 
-        # 找到预算输入框
-        budget_selector = SELECTORS["daily_budget_input"]
-        if not _safe_fill(page, budget_selector, str(new_budget)):
-            # fallback: 尝试通用 input
-            budget_selector = "input[type='number'], input.budget"
-            if not _safe_fill(page, budget_selector, str(new_budget)):
-                result["error"] = "无法找到预算输入框"
-                return result
+        # 找到预算输入框（多级 fallback）
+        budget_selectors = SELECTORS["budget_input"]
+        if not _safe_fill(page, budget_selectors, str(new_budget)):
+            result["error"] = "无法找到预算输入框"
+            return result
 
         # 保存
-        if _safe_click(page, SELECTORS["budget_save_btn"]):
+        save_selectors = SELECTORS["save_btn"]
+        if _safe_click(page, save_selectors):
             page.wait_for_timeout(2_000)
             # 检查成功提示
             try:
@@ -167,19 +243,17 @@ def execute_adjust_price(
     try:
         page = context.new_page()
         page.goto(PRODUCT_MANAGE_URL, wait_until="domcontentloaded", timeout=30_000)
+        _page_ready(page)
         page.wait_for_timeout(3_000)
 
-        # 找到价格输入框
-        price_selector = SELECTORS["price_input"]
-        if not _safe_fill(page, price_selector, f"{new_price:.2f}"):
-            # fallback: 通用价格输入
-            price_selector = "input[name='price'], input.price-amount"
-            if not _safe_fill(page, price_selector, f"{new_price:.2f}"):
-                result["error"] = "无法找到价格输入框"
-                return result
+        # 找到价格输入框（多级 fallback）
+        price_selectors = SELECTORS["price_input"]
+        if not _safe_fill(page, price_selectors, f"{new_price:.2f}"):
+            result["error"] = "无法找到价格输入框"
+            return result
 
         # 保存
-        if _safe_click(page, SELECTORS["price_save_btn"]):
+        if _safe_click(page, SELECTORS["save_btn"]):
             page.wait_for_timeout(2_000)
             try:
                 page.wait_for_selector(SELECTORS["success_toast"], timeout=5_000)
@@ -223,16 +297,20 @@ def execute_stop_ad(
     try:
         page = context.new_page()
         page.goto(AD_MANAGE_URL, wait_until="domcontentloaded", timeout=30_000)
+        _page_ready(page)
         page.wait_for_timeout(3_000)
 
-        # 点击暂停按钮
-        if _safe_click(page, SELECTORS["stop_campaign_btn"]):
+        # 点击暂停按钮（多级 fallback）
+        if _safe_click(page, SELECTORS["stop_campaign_btn"] + [
+            "[aria-label*='pause' i]",
+            ".campaign-action-pause",
+        ]):
             page.wait_for_timeout(1_000)
             # 确认弹窗
             try:
                 confirm_el = page.wait_for_selector(SELECTORS["confirm_btn"], timeout=3_000)
                 if confirm_el:
-                    _safe_click(page, SELECTORS["confirm_btn"])
+                    _safe_click(page, [SELECTORS["confirm_btn"]])
             except Exception:
                 # 可能没有确认弹窗
                 pass
@@ -277,20 +355,27 @@ def execute_switch_ad_type(
     try:
         page = context.new_page()
         page.goto(AD_MANAGE_URL, wait_until="domcontentloaded", timeout=30_000)
+        _page_ready(page)
         page.wait_for_timeout(3_000)
 
-        # 选择广告类型
-        type_selector = SELECTORS["ad_type_selector"]
-        try:
-            page.wait_for_selector(type_selector, timeout=10_000)
-            page.select_option(type_selector, new_type)
-            page.wait_for_timeout(_random_delay())
-        except Exception:
+        # 选择广告类型（多级 fallback）
+        type_selectors = SELECTORS["ad_type_selector"]
+        selected = False
+        for selector in type_selectors:
+            try:
+                page.wait_for_selector(selector, timeout=5_000)
+                page.select_option(selector, new_type)
+                page.wait_for_timeout(_random_delay())
+                selected = True
+                break
+            except Exception:
+                continue
+        if not selected:
             result["error"] = "无法找到广告类型选择器"
             return result
 
         # 保存
-        _safe_click(page, SELECTORS["budget_save_btn"])
+        _safe_click(page, SELECTORS["save_btn"])
         page.wait_for_timeout(2_000)
         result["success"] = True
 

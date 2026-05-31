@@ -111,23 +111,35 @@ def _run_login_flow_sync(domain: str, timeout: int) -> None:
 
     try:
         from playwright.sync_api import sync_playwright
+        from App.services.stealth import STEALTH_JS
 
         pw = sync_playwright().start()
-        # 优先用系统 Edge（Playwright 自带 Chromium 在 Windows 非 headless 可能 spawn UNKNOWN）
-        launch_kwargs = {"headless": False, "args": ["--disable-blink-features=AutomationControlled"]}
+        launch_kwargs = {
+            "headless": False,
+            "args": [
+                "--disable-blink-features=AutomationControlled",
+                "--disable-features=IsolateOrigins,site-per-process",
+                "--disable-infobars",
+                "--no-sandbox",
+            ],
+        }
         try:
             browser = pw.chromium.launch(channel="msedge", **launch_kwargs)
         except Exception:
             browser = pw.chromium.launch(**launch_kwargs)
 
         context = browser.new_context(
-            viewport={"width": 1280, "height": 800},
+            viewport={"width": 1440, "height": 900},
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/125.0.0.0 Safari/537.36"
             ),
+            locale="zh-CN",
+            timezone_id="Asia/Shanghai",
+            screen={"width": 1920, "height": 1080},
         )
+        context.add_init_script(STEALTH_JS)
         page = context.new_page()
         page.goto(ALIEXPRESS_LOGIN_URL, wait_until="domcontentloaded")
 
