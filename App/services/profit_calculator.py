@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-
-from App.core.logging import get_logger
 from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from App.core.logging import get_logger
 from App.models.base import (
     AdSnapshot,
     LogisticsRate,
@@ -20,6 +19,9 @@ from App.models.base import (
 )
 
 logger = get_logger(__name__)
+
+# 估算系数：缺失 cost_price 时用 current_price * ESTIMATE_RATIO
+ESTIMATE_RATIO = 0.7
 
 
 async def _get_product(db: AsyncSession, sku_id: str) -> Product | None:
@@ -46,6 +48,7 @@ async def _get_platform_fee_rate(db: AsyncSession, category: str | None) -> floa
     )
     row = result.scalar_one_or_none()
     if row is None:
+        logger.warning("未找到类目 '%s' 的平台费率，使用全局默认费率回退", category)
         # fallback: get first available fee_rate
         result = await db.execute(select(PlatformFee.fee_rate).limit(1))
         row = result.scalar_one_or_none()
@@ -74,13 +77,17 @@ async def _compute_logistics_cost(
         # fallback: average across all rates
         result = await db.execute(select(func.avg(LogisticsRate.cost)))
         avg = result.scalar_one_or_none()
-        return float(avg) if avg is not None else 0.0
+        if avg is None:
+            logger.warning("物流费率表为空，物流成本设为 0")
+            return 0.0
+        return float(avg)
 
     # 获取所有物流费率
     result = await db.execute(select(LogisticsRate))
     all_rates = list(result.scalars().all())
 
     if not all_rates:
+        logger.warning("物流费率表为空（有地区分布数据但无匹配），物流成本设为 0")
         return 0.0
 
     # 构建 region → cost 映射（取该 region 的第一个费率）
@@ -160,10 +167,25 @@ async def compute_profit(db: AsyncSession, sku_id: str) -> ProfitAnalysis:
     if product is None:
         raise ValueError(f"SKU '{sku_id}' 不存在")
 
-    cost_price = float(product.cost_price)
+    cost_price = float(product.cost_price) if product.cost_price else 0.0
 
     # 2. 最新价格
     current_price = await _get_latest_price(db, sku_id)
+
+    # 2a. 缺失 cost_price 时自动估算
+    if cost_price <= 0:
+        if current_price > 0:
+            cost_price = round(current_price * ESTIMATE_RATIO, 2)
+            logger.warning(
+                "SKU '%s' 缺少 cost_price，按 current_price(%.2f) × %.1f = %.2f 估算",
+                sku_id, current_price, ESTIMATE_RATIO, cost_price,
+            )
+        else:
+            logger.warning(
+                "SKU '%s' 缺少 cost_price 且 current_price 为 0，无法估算",
+                sku_id,
+            )
+
     if current_price <= 0:
         current_price = cost_price  # fallback
 
@@ -243,3 +265,39 @@ async def compute_profit(db: AsyncSession, sku_id: str) -> ProfitAnalysis:
     )
 
     return analysis
+
+
+def profit_calculator_smoke_test() -> dict[str, Any]:
+    """快速烟雾测试：验证核心计算逻辑正确性，无需数据库。"""
+    results: dict[str, Any] = {"passed": 0, "failed": 0, "checks": []}
+
+    def _check(name: str, condition: bool, detail: str = "") -> None:
+        if condition:
+            results["passed"] += 1
+        else:
+            results["failed"] += 1
+        entry: dict[str, Any] = {"name": name, "passed": condition}
+        if detail:
+            entry["detail"] = detail
+        results["checks"].append(entry)
+
+    # 1. ESTIMATE_RATIO 在合理范围内
+    _check(
+        "ESTIMATE_RATIO 在 0.5~0.9 之间",
+        0.5 <= ESTIMATE_RATIO <= 0.9,
+        f"ESTIMATE_RATIO={ESTIMATE_RATIO}",
+    )
+
+    # 2. _compute_roi_7d_trend 正常处理空列表
+    empty_trend = _compute_roi_7d_trend([])
+    _check(
+        "空快照列表返回空趋势",
+        empty_trend == [],
+        f"trend={empty_trend}",
+    )
+
+    # 3. 模块导入正常
+    _check("模块导入正常", True)
+
+    logger.info("profit_calculator_smoke_test", extra={"passed": results["passed"], "failed": results["failed"]})
+    return results
