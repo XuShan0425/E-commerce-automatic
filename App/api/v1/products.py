@@ -15,6 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from App.core.database import get_db
 from App.core.security import verify_api_key
 from App.models.base import Product
+from pydantic import BaseModel
+
 from App.schemas.product import (
     CSVImportResult,
     ProductCreate,
@@ -22,6 +24,22 @@ from App.schemas.product import (
     ProductToggleTracking,
     ProductUpdate,
 )
+
+
+class CostUpdateItem(BaseModel):
+    """单商品成本价更新请求。"""
+    cost_price: float
+
+
+class BatchCostItem(BaseModel):
+    """批量成本价更新项。"""
+    product_id: int
+    cost_price: float
+
+
+class BatchCostRequest(BaseModel):
+    """批量成本价更新请求。"""
+    items: list[BatchCostItem]
 
 logger = get_logger(__name__)
 
@@ -124,6 +142,50 @@ async def delete_product(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="商品不存在")
     await db.delete(product)
     await db.flush()
+
+
+# ── 成本价管理 ────────────────────────────────────
+
+@router.put("/{product_id}/cost")
+async def update_product_cost(
+    product_id: int,
+    body: CostUpdateItem,
+    _api_key: str = Depends(verify_api_key),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """更新单个商品成本价。"""
+    product = await db.get(Product, product_id)
+    if product is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="商品不存在")
+    product.cost_price = body.cost_price
+    await db.flush()
+    await db.refresh(product)
+    return {
+        "id": product.id,
+        "sku_id": product.sku_id,
+        "name": product.name,
+        "cost_price": float(product.cost_price),
+    }
+
+
+@router.put("/batch-cost")
+async def batch_update_cost(
+    body: BatchCostRequest,
+    _api_key: str = Depends(verify_api_key),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """批量更新商品成本价。"""
+    updated = 0
+    failed: list[dict] = []
+    for item in body.items:
+        product = await db.get(Product, item.product_id)
+        if product is None:
+            failed.append({"product_id": item.product_id, "error": "商品不存在"})
+            continue
+        product.cost_price = item.cost_price
+        updated += 1
+    await db.flush()
+    return {"updated": updated, "failed": failed}
 
 
 # ── 跟踪管理 ────────────────────────────────────

@@ -22,6 +22,10 @@ class ErrorCode(str, Enum):
     # ── 页面抓取 ────────────────────────────────
     PAGE_CHANGED = "PAGE_CHANGED"
     PAGE_TIMEOUT = "PAGE_TIMEOUT"
+    COLLECTION_TIMEOUT = "COLLECTION_TIMEOUT"
+    COLLECTION_EMPTY = "COLLECTION_EMPTY"
+    EXPORT_TIMEOUT = "EXPORT_TIMEOUT"
+    EXPORT_PARSE_ERROR = "EXPORT_PARSE_ERROR"
 
     # ── AI / LLM ───────────────────────────────
     AI_FAILED = "AI_FAILED"
@@ -47,6 +51,10 @@ _SUGGESTIONS: dict[ErrorCode, str] = {
     ErrorCode.RATE_LIMIT: "请求频率过高，请稍后重试（建议间隔 ≥ 30 分钟）",
     ErrorCode.PAGE_CHANGED: "速卖通页面结构已变化，自动抓取可能受影响，请联系管理员更新",
     ErrorCode.PAGE_TIMEOUT: "速卖通页面加载超时，请检查网络或代理连接",
+    ErrorCode.COLLECTION_TIMEOUT: "速卖通商品列表采集超时，未捕获到商品 API 响应，请检查网络或刷新 Cookie 后重试",
+    ErrorCode.COLLECTION_EMPTY: "已捕获 API 响应但未提取到有效商品数据，请确认店铺中有已发布的商品",
+    ErrorCode.EXPORT_TIMEOUT: "商品导出等待超时（60秒），请在速卖通页面重新尝试导出",
+    ErrorCode.EXPORT_PARSE_ERROR: "导出的 Excel 文件格式异常，请确认文件包含正确的商品信息列",
     ErrorCode.AI_FAILED: "AI 服务不可用，请检查 LLM API Key 配置和额度",
     ErrorCode.AI_PARSE_ERROR: "AI 返回内容解析失败，请稍后重试或检查模型配置",
     ErrorCode.VALIDATION_ERROR: "输入数据格式不正确，请检查后重试",

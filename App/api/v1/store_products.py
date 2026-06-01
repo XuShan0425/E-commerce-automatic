@@ -17,7 +17,7 @@ router = APIRouter(prefix="/store-products", tags=["store-products"])
 
 @router.post("/fetch")
 async def fetch_store_products(
-    headless: bool = False,
+    headless: bool = True,
     _api_key: str = Depends(verify_api_key),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -25,9 +25,11 @@ async def fetch_store_products(
     cookie_mgr = CookieManager(db)
     result = await scrape_store_products(cookie_mgr, headless=headless)
     if not result.get("success"):
+        errors = result.get("errors", [])
+        msg = "; ".join(errors) if errors else result.get("message", "抓取失败")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=result.get("message", "抓取失败"),
+            detail=msg,
         )
     # 标记已存在于系统中的商品
     existing = await db.execute(select(Product.sku_id))

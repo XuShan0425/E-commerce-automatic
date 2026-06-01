@@ -12,6 +12,7 @@ This project bundles skills that opencode will auto-invoke when relevant:
 | `agent-worker` | Executing a task from `.codex-tasks/active/` |
 | `agent-reviewer` | Reviewing PRs or task implementations |
 | `agent-integrator` | Integrating multiple task PRs |
+| `agent-orchestrator` | Auto-orchestrating full EPIC lifecycle (group → parallel workers → review → integrate → final PR) |
 | `find-skills` | Discovering and installing missing skills |
 
 Skills are loaded from `skills/agents/` and `C:/Users/Tong/.agents/skills/`.
@@ -83,6 +84,21 @@ After finishing (MANDATORY):
 - **Do NOT skip PR creation** unless the user explicitly says "no PR".
 - Do not use `--no-pr` by default — the default is to create a PR.
 - If pre-existing lint or doc issues exist, fix them in the same task PR.
+
+### EPIC-level orchestration
+
+For multi-task EPICs, prefer `@agent-orchestrator EPIC-XXX` to run the full pipeline:
+
+```
+agent-planner → orchestrator (group → parallel workers → review → integrate → final PR)
+```
+
+The orchestrator automatically:
+- Groups tasks by parallel safety and dependencies
+- Forks isolated worktrees for concurrent task execution
+- Runs post-task (lint, GC, doc, verify, PR) on each completed task
+- Reviews and integrates all task PRs
+- Finalizes docs, quality score, and creates the merge-to-main PR
 
 ## Task Files
 

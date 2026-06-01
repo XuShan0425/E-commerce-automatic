@@ -11,6 +11,15 @@ from App.models.base import (
     ProfitAnalysis,
 )
 from App.models.cookie import CookieStore
+from App.models.product_analytics import (
+    CoreMetric,
+    KeywordData,
+    PriceDistribution,
+    ServiceData,
+    SkuAnalysis,
+    TrafficSource,
+)
+from App.models.product_import import ProductSku
 from App.models.system_state import SystemState
 
 __all__ = [
@@ -24,4 +33,11 @@ __all__ = [
     "AdSnapshot",
     "PriceSnapshot",
     "ProfitAnalysis",
+    "ProductSku",
+    "CoreMetric",
+    "TrafficSource",
+    "KeywordData",
+    "ServiceData",
+    "PriceDistribution",
+    "SkuAnalysis",
 ]

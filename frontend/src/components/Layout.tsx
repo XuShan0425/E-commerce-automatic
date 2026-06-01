@@ -4,6 +4,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 const NAV = [
   { to: '/', label: '仪表盘', icon: '📊' },
   { to: '/products', label: '商品管理', icon: '📦' },
+  { to: '/rates-settings', label: '费率设置', icon: '💰' },
   { to: '/logs', label: '日志中心', icon: '📋' },
   { to: '/alerts', label: '警报中心', icon: '🔔' },
   { to: '/reports', label: '报告查看', icon: '📈' },
