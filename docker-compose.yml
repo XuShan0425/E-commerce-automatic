@@ -40,6 +40,13 @@ services:
       - "${APP_PORT:-8000}:8000"
     env_file:
       - .env
+    environment:
+      - DB_HOST=postgres
+      - REDIS_HOST=redis
+      - REDIS_URL=redis://redis:6379/0
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - NO_PROXY=${NO_PROXY:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -49,6 +56,15 @@ services:
       - ./App:/app/App
       - ./db:/app/db
       - ./tests:/app/tests
+
+  frontend:
+    build: ./frontend
+    container_name: ad-manager-frontend
+    restart: unless-stopped
+    ports:
+      - "${FE_PORT:-3000}:80"
+    depends_on:
+      - app
 
 volumes:
   pgdata:
