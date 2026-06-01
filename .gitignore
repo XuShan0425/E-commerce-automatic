@@ -32,3 +32,13 @@ node_modules/
 # App runtime
 data/
 logs/
+
+# Build cache
+.vite/
+
+# Screenshots (binary, large)
+screenshots/
+
+# Temporary Vite logs
+vite-stderr.txt
+vite-stdout.txt
