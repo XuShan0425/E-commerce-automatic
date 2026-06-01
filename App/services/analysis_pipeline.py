@@ -2,25 +2,28 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+import asyncio
+from datetime import UTC, datetime
 from typing import Any
-
-from App.core.logging import get_logger
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from App.models.base import AdSnapshot, PriceSnapshot, Product
+from App.core.logging import get_logger
+from App.models.base import PriceSnapshot, Product
+from App.services.boundary_checker import check_boundaries
+from App.services.decision_engine import generate_decision
 from App.services.profit_calculator import (
     _get_ad_snapshots_7d,
     _get_platform_fee_rate,
     _get_product,
     compute_profit,
 )
-from App.services.decision_engine import generate_decision
-from App.services.boundary_checker import check_boundaries
 
 logger = get_logger(__name__)
+
+# 并发控制：AI 分析的最大并发数，避免 API 限流
+_MAX_CONCURRENT_AI = 5
 
 
 async def analyze_single_sku(
@@ -42,7 +45,7 @@ async def analyze_single_sku(
 
     result: dict[str, Any] = {
         "sku_id": sku_id,
-        "analyzed_at": datetime.now(timezone.utc).isoformat(),
+        "analyzed_at": datetime.now(UTC).isoformat(),
         "success": False,
         "profit": None,
         "decision": None,
@@ -167,7 +170,7 @@ async def analyze_all_skus(
     Returns:
         {"total": int, "analyzed": int, "results": list[dict], "summary": dict}
     """
-    result = await db.execute(select(Product).where(Product.is_tracked == True))
+    result = await db.execute(select(Product).where(Product.is_tracked))
     products = list(result.scalars().all())
 
     if not products:
@@ -179,9 +182,16 @@ async def analyze_all_skus(
         }
 
     all_results = []
-    for product in products:
-        r = await analyze_single_sku(db, product.sku_id, skip_ai=skip_ai)
-        all_results.append(r)
+
+    sem = asyncio.Semaphore(_MAX_CONCURRENT_AI)
+
+    async def _analyze_one(product: Product) -> dict[str, Any]:
+        async with sem:
+            return await analyze_single_sku(db, product.sku_id, skip_ai=skip_ai)
+
+    tasks = [_analyze_one(product) for product in products]
+    for coro in asyncio.as_completed(tasks):
+        all_results.append(await coro)
 
     # 汇总
     passed_count = sum(
