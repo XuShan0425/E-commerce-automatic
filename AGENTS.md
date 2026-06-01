@@ -10,6 +10,7 @@ This project bundles skills that opencode will auto-invoke when relevant:
 
 | Skill | Triggers when |
 |-------|--------------|
+| `agent-orchestrator` | Orchestrating full EPIC lifecycle — plan, group, execute, review, integrate |
 | `agent-planner` | Planning complex requirements into EPIC/TASK files |
 | `agent-worker` | Executing a task from `.codex-tasks/active/` |
 | `agent-reviewer` | Reviewing PRs or task implementations |
@@ -95,12 +96,15 @@ For multi-task EPICs, prefer `@agent-orchestrator EPIC-XXX` to run the full pipe
 agent-planner → orchestrator (group → parallel workers → review → integrate → final PR)
 ```
 
-The orchestrator automatically:
-- Groups tasks by parallel safety and dependencies
-- Forks isolated worktrees for concurrent task execution
-- Runs post-task (lint, GC, doc, verify, PR) on each completed task
-- Reviews and integrates all task PRs
-- Finalizes docs, quality score, and creates the merge-to-main PR
+The orchestrator uses the Workflow tool for programmatic execution:
+1. Groups tasks by parallel safety and dependencies
+2. Forks isolated worktrees for concurrent task execution via `parallel()`
+3. Runs post-task (lint, GC, doc, verify, PR) on each completed task
+4. Reviews all task PRs via `agent-reviewer`
+5. Creates an integration branch, merges task PRs, runs final verification
+6. Finalizes docs, quality score, and opens the final PR into `main`
+
+Do **not** skip integration review — all task PRs must be reviewed before merging. The orchestrator never auto-merges.
 
 ## Task Files
 

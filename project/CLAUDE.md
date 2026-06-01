@@ -338,6 +338,7 @@ profit_analysis
 
 | 技能 | 触发场景 |
 |------|---------|
+| `agent-orchestrator` | Orchestrate full EPIC lifecycle — plan, group, execute, review, integrate |
 | `agent-planner` | 将需求规划为 EPIC / TASK 文件 |
 | `agent-worker` | 执行 `docs/exec-plans/active/` 中的任务 |
 | `agent-reviewer` | 审查 PR / 任务实现 |
