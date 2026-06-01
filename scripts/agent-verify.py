@@ -20,13 +20,15 @@
 """
 
 import json
-import subprocess
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+from scripts.utils.command import run_cmd  # noqa: E402
+
 EVIDENCE_DIR = ROOT / ".codex-runs"
 
 # 配置
@@ -37,17 +39,6 @@ CHECK_TIMEOUT = 10  # 秒
 def ensure_evidence_dir() -> Path:
     EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
     return EVIDENCE_DIR
-
-
-def run_cmd(cmd: list[str], timeout: int = 30) -> tuple[int, str, str]:
-    """运行命令，返回 (exit_code, stdout, stderr)。"""
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        return result.returncode, result.stdout.strip(), result.stderr.strip()
-    except subprocess.TimeoutExpired:
-        return -1, "", f"超时 ({timeout}s)"
-    except FileNotFoundError:
-        return -1, "", f"命令不存在: {cmd[0]}"
 
 
 def check_health() -> dict:
@@ -118,7 +109,11 @@ def check_typescript_build() -> dict:
     if not frontend_dir.exists():
         return {"status": "skipped", "reason": "frontend/ 目录不存在"}
 
-    code, out, err = run_cmd(["npx", "tsc", "--noEmit"], timeout=60, cwd=str(frontend_dir))
+    code, out, err = run_cmd(
+        ["npx", "tsc", "--noEmit"],
+        timeout=60,
+        cwd=str(frontend_dir),
+    )
     return {
         "status": "ok" if code == 0 else "failed",
         "errors": err[:1000] if err else "",
@@ -140,6 +135,7 @@ def main() -> int:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     evidence_dir = ensure_evidence_dir()
     evidence_file = evidence_dir / f"verify-{timestamp}.json"
+    log_file = evidence_dir / f"verify-{timestamp}.log"
 
     quick = "--quick" in sys.argv
 
@@ -208,7 +204,6 @@ def main() -> int:
 
     # Save evidence
     evidence_file.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
-    log_file = evidence_dir / f"verify-{timestamp}.log"
     log_file.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print("\n" + "=" * 60)

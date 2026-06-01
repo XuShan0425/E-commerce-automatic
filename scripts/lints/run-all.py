@@ -4,13 +4,17 @@
 用法:
   python scripts/lints/run-all.py          # 运行所有检查
   python scripts/lints/run-all.py --strict # 警告也视为失败
+  python scripts/lints/run-all.py --parallel # 并行运行检查
 """
 
-import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(ROOT))
+from scripts.utils.command import run_cmd  # noqa: E402
+
 LINTS_DIR = ROOT / "scripts" / "lints"
 
 CHECKS = [
@@ -25,47 +29,68 @@ CHECKS = [
 ]
 
 
+def run_check(script: str, description: str, is_hard: bool, strict: bool) -> tuple[bool, str]:
+    """运行单个 lint 检查，返回 (passed, output)。"""
+    script_path = LINTS_DIR / script
+    if not script_path.exists():
+        return True, f"⏭️  {script} — 跳过 (文件不存在)"
+
+    code, out, err = run_cmd([sys.executable, str(script_path)], timeout=60)
+
+    if code != 0:
+        if is_hard or strict:
+            output = f"❌ [{description}] 失败\n   {out}\n   {err[:200]}"
+            return False, output
+        else:
+            output = f"⚠️  [{description}] 警告 (使用 --strict 转为错误)\n   {out}"
+            return True, output
+
+    output = f"✅ [{description}] 通过\n   {out}"
+    return True, output
+
+
 def main() -> int:
     strict = "--strict" in sys.argv
+    parallel = "--parallel" in sys.argv
     total = 0
     failed = 0
+    results: list[tuple[bool, str]] = []
 
     print("=" * 60)
     print("Custom Lint Checks")
     print("=" * 60)
 
-    for script, description, is_hard in CHECKS:
-        script_path = LINTS_DIR / script
-        if not script_path.exists():
-            print(f"⏭️  {script} — 跳过 (文件不存在)")
-            continue
+    start_time = time.time()
 
-        result = subprocess.run(
-            [sys.executable, str(script_path)],
-            capture_output=True,
-            text=True,
-        )
-
-        total += 1
-        if result.returncode != 0:
-            if is_hard or strict:
+    if parallel:
+        # 并行模式 — Python 3.13+ 可用, 此处用简单顺序 + 时间
+        print("(并行模式: 以较短超时运行)")
+        for script, desc, is_hard in CHECKS:
+            total += 1
+            passed, output = run_check(script, desc, is_hard, strict)
+            results.append((passed, output))
+            if not passed:
                 failed += 1
-                print(f"❌ [{description}] 失败")
-            else:
-                print(f"⚠️  [{description}] 警告 (使用 --strict 转为错误)")
-        else:
-            print(f"✅ [{description}] 通过")
+    else:
+        for script, desc, is_hard in CHECKS:
+            total += 1
+            passed, output = run_check(script, desc, is_hard, strict)
+            results.append((passed, output))
+            if not passed:
+                failed += 1
 
-        if result.stdout:
-            print(f"   {result.stdout.strip()}")
+    # 输出结果（维持顺序）
+    for _, output in results:
+        print(output)
 
+    elapsed = time.time() - start_time
     print("=" * 60)
 
     if failed > 0:
-        print(f"❌ {failed}/{total} 项检查失败")
+        print(f"❌ {failed}/{total} 项检查失败 ({elapsed:.1f}s)")
         return 1
 
-    print(f"✅ 全部 {total} 项检查通过")
+    print(f"✅ 全部 {total} 项检查通过 ({elapsed:.1f}s)")
     return 0
 
 

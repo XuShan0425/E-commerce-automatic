@@ -19,13 +19,15 @@
 
 import argparse
 import json
-import subprocess
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+from scripts.utils.command import run_cmd, run_python_script  # noqa: E402
+
 EVIDENCE_DIR = ROOT / ".codex-runs"
 
 STEP_EMOJI = {
@@ -43,25 +45,6 @@ def ensure_evidence_dir(timestamp: str) -> Path:
     run_dir = EVIDENCE_DIR / timestamp
     run_dir.mkdir(parents=True, exist_ok=True)
     return run_dir
-
-
-def run_cmd(cmd: list[str], timeout: int = 120) -> tuple[int, str, str]:
-    try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout,
-        )
-        return result.returncode, result.stdout.strip(), result.stderr.strip()
-    except subprocess.TimeoutExpired:
-        return -1, "", f"超时 ({timeout}s)"
-    except FileNotFoundError:
-        return -1, "", f"命令不存在: {cmd[0]}"
-
-
-def run_python_script(script_name: str, args: list[str], timeout: int = 120) -> tuple[int, str, str]:
-    script_path = ROOT / "scripts" / script_name
-    if not script_path.exists():
-        return -1, "", f"脚本不存在: {script_name}"
-    return run_cmd([sys.executable, str(script_path), *args], timeout=timeout)
 
 
 # ── 步骤 1: 任务完成 ───────────────────────────
