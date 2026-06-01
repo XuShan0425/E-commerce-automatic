@@ -24,6 +24,10 @@ export function Settings() {
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   const [loading, setLoading] = useState(true);
+  const [logPanel, setLogPanel] = useState(false);
+  const [logContent, setLogContent] = useState('');
+  const [logLoading, setLogLoading] = useState(false);
+  const [restarting, setRestarting] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -127,6 +131,50 @@ export function Settings() {
     }
   }
 
+  async function handleRestart() {
+    if (!confirm('确认重启后端服务？网页会断开约 3-5 秒，之后自动恢复。')) return;
+    setRestarting(true);
+    try {
+      await api.post('/system/restart');
+      addToast('重启指令已发送，等待服务重启...', 'info');
+      // 轮询等待重启完成
+      let retries = 0;
+      const poll = setInterval(async () => {
+        retries++;
+        try {
+          const s = await api.get<any>('/system/status', { noAuth: true });
+          if (s) {
+            clearInterval(poll);
+            addToast('服务已重启完成', 'success');
+            setRestarting(false);
+            load();
+          }
+        } catch {
+          if (retries > 30) {
+            clearInterval(poll);
+            addToast('重启超时，请手动刷新页面', 'error');
+            setRestarting(false);
+          }
+        }
+      }, 2000);
+    } catch (e: any) {
+      addToast(e.message || '重启失败', 'error');
+      setRestarting(false);
+    }
+  }
+
+  async function handleOpenLog() {
+    setLogPanel(true);
+    setLogLoading(true);
+    try {
+      const r = await api.get<{ content: string; total_lines: number }>('/system/logs?lines=200');
+      setLogContent(r.content || '暂无日志');
+    } catch (e: any) {
+      setLogContent(`获取日志失败: ${e.message}`);
+    }
+    setLogLoading(false);
+  }
+
   if (loading) return <div className="text-center py-12 text-gray-400">加载中...</div>;
 
   return (
@@ -176,6 +224,12 @@ export function Settings() {
           </button>
           <button onClick={handleTestEmail} className="px-3 py-1.5 bg-gray-600 text-white rounded text-sm hover:bg-gray-700">
             邮件测试
+          </button>
+          <button onClick={handleRestart} disabled={restarting} className="px-3 py-1.5 bg-orange-600 text-white rounded text-sm hover:bg-orange-700 disabled:opacity-50">
+            {restarting ? '重启中...' : '🔄 热重启'}
+          </button>
+          <button onClick={handleOpenLog} className="px-3 py-1.5 bg-gray-800 text-white rounded text-sm hover:bg-gray-900">
+            📋 查看日志
           </button>
         </div>
         <div className="flex gap-2 mt-2">
@@ -229,6 +283,21 @@ export function Settings() {
           </table>
         )}
       </section>
+
+      {/* ── 日志查看器 ── */}
+      {logPanel && (
+        <section className="bg-white rounded-lg shadow p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-base font-semibold text-gray-700">应用日志</h2>
+            <button onClick={() => setLogPanel(false)} className="text-gray-400 hover:text-gray-600 text-sm">
+              关闭
+            </button>
+          </div>
+          <div className="bg-gray-900 text-green-300 font-mono text-xs rounded-lg p-4 overflow-auto max-h-96 whitespace-pre-wrap">
+            {logLoading ? '加载中...' : logContent}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

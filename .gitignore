@@ -28,3 +28,7 @@ pgdata/
 
 # Node
 node_modules/
+
+# App runtime
+data/
+logs/
