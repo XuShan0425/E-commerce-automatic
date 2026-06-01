@@ -25,15 +25,22 @@ router = APIRouter(prefix="/rates", tags=["rates"])
 
 # ══════════════════════════════════════════════════
 # 原有端点（Playwright + 兼容保留）
+# ⚠️ 已弃用：请使用 /rates/logistics/fetch 和 /rates/commission/fetch（requests 版，无需浏览器）
 # ══════════════════════════════════════════════════
 
 @router.post("/parse-logistics", response_model=ParseResultLogistics)
 async def parse_logistics(
     _api_key: str = Depends(verify_api_key),
 ) -> ParseResultLogistics:
-    """抓取速卖通物流费率页面，AI 解析后返回预览。"""
+    """抓取速卖通物流费率页面，AI 解析后返回预览。
+
+    返回的数据为未确认状态，需要调用 /confirm-logistics 确认后才会写入数据库。
+
+    ⚠️ 已弃用：将迁移至基于 requests 的 /rates/logistics/fetch。
+    """
     from App.services.rate_parser import parse_logistics_rates
 
+    logger.warning("已弃用的端点被调用: POST /rates/parse-logistics，请改用 /rates/logistics/fetch")
     browser = BrowserService(headless=True)
     try:
         result = await parse_logistics_rates(browser)
@@ -49,9 +56,15 @@ async def parse_logistics(
 async def parse_fees(
     _api_key: str = Depends(verify_api_key),
 ) -> ParseResultFees:
-    """抓取速卖通平台佣金页面，AI 解析后返回预览。"""
+    """抓取速卖通平台佣金页面，AI 解析后返回预览。
+
+    返回的数据为未确认状态，需要调用 /confirm-fees 确认后才会写入数据库。
+
+    ⚠️ 已弃用：将迁移至基于 requests 的 /rates/commission/fetch。
+    """
     from App.services.rate_parser import parse_platform_fees
 
+    logger.warning("已弃用的端点被调用: POST /rates/parse-fees，请改用 /rates/commission/fetch")
     browser = BrowserService(headless=True)
     try:
         result = await parse_platform_fees(browser)

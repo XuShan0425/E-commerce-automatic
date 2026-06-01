@@ -30,11 +30,15 @@ export function Settings() {
     try {
       const s = await api.get<SystemStatus>('/system/status', { noAuth: true });
       setStatus(s);
-    } catch {}
+    } catch (e: any) {
+      addToast(e?.message || '无法获取系统状态', 'error');
+    }
     try {
       const keys = await api.get<ApiKey[]>('/api-keys/');
       setApiKeys(keys);
-    } catch {}
+    } catch (e: any) {
+      addToast(e?.message || '无法获取 API Key 列表', 'error');
+    }
     setLoading(false);
   }
 

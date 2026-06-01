@@ -33,15 +33,18 @@
 
 from __future__ import annotations
 
-import json
 import re
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+
+from App.core.logging import get_logger
 
 if TYPE_CHECKING:
     from App.services.cookie_manager import CookieManager
+
+logger = get_logger(__name__)
 
 # ── CSP 卖家中心 URL ──────────────────────────────
 CSP_HOME_URL = "https://csp.aliexpress.com/"
@@ -397,7 +400,7 @@ def _run_scrape_sync(
         "success": False,
         "products": [],
         "errors": [],
-        "scraped_at": datetime.now(timezone.utc).isoformat(),
+        "scraped_at": datetime.now(UTC).isoformat(),
     }
 
     t0 = time.perf_counter()
@@ -420,6 +423,7 @@ def _run_scrape_sync(
             try:
                 body = response.json()
             except Exception:
+                logger.debug("API 响应 JSON 解析失败: %s", url)
                 return
             state.raw_json.append(body if isinstance(body, dict) else {"data": body})
             _extract_from_json(body, state)
@@ -616,12 +620,12 @@ def _extract_from_ait_dom(page) -> list[dict]:
                         && !l.startsWith('总计') && !l.startsWith('编辑')
                         && !l.startsWith('更多') && l !== 'SALE'
                         && !l.startsWith('GLOBAL') && !l.startsWith('商品')
-                        && !/^\d+$/.test(l) && !/^[\d.,\s]+$/.test(l);
+                        && !/^\\d+$/.test(l) && !/^[\\d.,\\s]+$/.test(l);
                 });
                 // 取最长的一行 (商品名通常最长)
                 if (lines.length > 0) {
                     lines.sort((a,b) => b.length - a.length);
-                    name = lines[0].replace(/\s*ID:\s*\d{7,20}\s*$/, '').trim();
+                    name = lines[0].replace(/\\s*ID:\\s*\\d{7,20}\\s*$/, '').trim();
                 }
             }
             // 备用: AIT 单元格链接
@@ -666,7 +670,7 @@ def _extract_from_ait_dom(page) -> list[dict]:
                 let cat = catMatch[1].trim();
                 // 只取到换行或 USD/更多分组/区域零售价 之前
                 cat = cat.replace(/\\n.*$/, '').trim();
-                cat = cat.replace(/\s*(?:USD|更多分组|区域零售价).*$/, '').trim();
+                cat = cat.replace(/\\s*(?:USD|更多分组|区域零售价).*$/, '').trim();
                 if (cat.length > 2) category = cat;
             }
 
@@ -711,8 +715,8 @@ def _extract_from_ait_dom(page) -> list[dict]:
                 item for item in raw
                 if isinstance(item, dict) and item.get("sku_id") and item.get("name")
             ]
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("AIT DOM 提取失败: %s", exc)
 
     return []
 
@@ -742,7 +746,8 @@ def _extract_from_inner_text(page) -> list[dict]:
     products: list[dict] = []
     try:
         text = page.evaluate("() => document.body.innerText")
-    except Exception:
+    except Exception as exc:
+        logger.debug("innerText 提取失败: %s", exc)
         return products
 
     if not text or len(text) < 100:
@@ -837,6 +842,7 @@ async def scrape_store_products(
 ) -> dict:
     """抓取店铺商品列表（异步入口）。"""
     import asyncio
+
     from App.core.errors import ErrorCode, error_response
 
     cookies = await cookie_manager.load_cookies("aliexpress.com")
