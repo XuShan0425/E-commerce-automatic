@@ -238,6 +238,23 @@ def _run_collection_sync(
         result["ad_api_responses"] = interceptor.result.ad_api_responses
         result["success"] = True
 
+        # ── 结构变更检测 ──────────────────────────
+        change_report = interceptor.detect_structure_change()
+        result["structure_change"] = change_report
+        if change_report["detected"]:
+            logger.warn(
+                "structure_change_detected",
+                extra={
+                    "confidence": change_report["confidence"],
+                    "reason": change_report["reason"],
+                    "metrics": change_report["metrics"],
+                },
+            )
+            result["errors"].append(
+                f"结构变更检测 ({change_report['confidence']:.0%} 置信度): "
+                f"{change_report['reason']}"
+            )
+
     except NonRetryableError as exc:
         # 不可重试异常 — 写入错误列表，不覆盖 success 标记
         result["errors"].append(f"不可恢复的采集异常: {exc}")
@@ -293,6 +310,19 @@ async def collect_ad_data(
         return error_response(
             ErrorCode.NETWORK_ERROR,
             "数据采集失败: " + "; ".join(raw.get("errors", [])),
+        )
+
+    # ── 结构变更检测: 高置信度 → 停止本次写入 ──────
+    change_report = raw.get("structure_change", {})
+    if change_report.get("detected") and change_report.get("confidence", 0) >= 0.8:
+        return error_response(
+            ErrorCode.PAGE_CHANGED,
+            change_report.get("reason", "速卖通 API 结构可能已变更"),
+            details={
+                "confidence": change_report.get("confidence"),
+                "metrics": change_report.get("metrics", {}),
+                "action": "请检查速卖通后台是否改版，更新 URL/字段模式后重试",
+            },
         )
 
     # ── 写入数据库 ────────────────────────────────

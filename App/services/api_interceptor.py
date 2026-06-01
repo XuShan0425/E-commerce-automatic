@@ -1,4 +1,9 @@
-"""API 请求拦截器 — 监听速卖通后台网络请求，提取广告和价格数据."""
+"""API 请求拦截器 — 监听速卖通后台网络请求，提取广告和价格数据.
+
+提供结构变更检测:
+  - detect_structure_change() 分析拦截结果，返回疑似 API 字段/URL 变更的信号
+  - 在采集流程中调用，避免后端 API 改版后静默失败
+"""
 
 from __future__ import annotations
 
@@ -6,6 +11,10 @@ import json
 import re
 from dataclasses import dataclass, field
 from typing import Any
+
+from App.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 from playwright.sync_api import Page, Response as PWResponse
 
@@ -194,6 +203,9 @@ class InterceptResult:
     price_data: list[CollectedPriceData] = field(default_factory=list)
     total_responses: int = 0
     ad_api_responses: int = 0
+    # ── 结构变更检测字段 ──────────────────────────
+    responses_without_match: int = 0  # 匹配 URL 但未提取到任何字段的响应数
+    response_urls: list[str] = field(default_factory=list)  # 所有 API 响应 URL
 
 
 class AdDataInterceptor:
@@ -219,17 +231,112 @@ class AdDataInterceptor:
             return
 
         self.result.ad_api_responses += 1
+        self.result.response_urls.append(url)
 
         try:
             body = response.json()
         except Exception:
+            self.result.responses_without_match += 1
             return
 
         if not isinstance(body, (dict, list)):
+            self.result.responses_without_match += 1
             return
+
+        # 记录本次响应中是否提取到数据
+        ad_before = len(self.result.ad_data)
+        price_before = len(self.result.price_data)
 
         self._extract_ad_data(url, body)
         self._extract_price_data(url, body)
+
+        if len(self.result.ad_data) == ad_before and len(self.result.price_data) == price_before:
+            # API 响应已匹配 URL 模式，但字段提取未命中
+            self.result.responses_without_match += 1
+
+    def detect_structure_change(self) -> dict:
+        """分析当前拦截结果，返回结构变更检测报告。
+
+        报告包含:
+          - detected: bool — 是否检测到疑似结构变更
+          - confidence: float — 0.0 ~ 1.0
+          - reason: str — 判断依据
+          - metrics: dict — 诊断指标
+
+        判断逻辑:
+          1. 零 API 响应: 页面可能完全改版（URL 模式全部失效）
+          2. 全部未命中: 所有 API 响应都无法提取数据（字段名已变更）
+          3. 部分未命中: 部分 API 数据格式已变化（渐进式改版）
+          4. 正常: 大部分 API 响应都能正常提取数据
+        """
+        total_api = self.result.ad_api_responses
+        total_matched_ad = len(self.result.ad_data)
+        total_matched_price = len(self.result.price_data)
+        total_matched = total_matched_ad + total_matched_price
+        no_match = self.result.responses_without_match
+
+        metrics = {
+            "total_api_responses": total_api,
+            "total_ad_records": total_matched_ad,
+            "total_price_records": total_matched_price,
+            "responses_without_match": no_match,
+        }
+
+        # ── 场景 1: 没有 API 响应 ──────────────────
+        if total_api == 0 and self.result.total_responses > 0:
+            # 有普通响应但没有 API 响应 → URL 模式可能全部失效
+            return {
+                "detected": True,
+                "confidence": 0.9,
+                "reason": "页面已加载但未捕获任何广告 API 响应，URL 模式可能已变更",
+                "metrics": metrics,
+            }
+
+        # ── 场景 2: 全部未命中 ─────────────────────
+        if total_api > 0 and no_match == total_api and total_matched == 0:
+            return {
+                "detected": True,
+                "confidence": 0.85,
+                "reason": (
+                    f"共捕获 {total_api} 个 API 响应，但均无法提取广告或价格数据。"
+                    "API 返回格式可能已变更"
+                ),
+                "metrics": metrics,
+            }
+
+        # ── 场景 3: 高比例未命中 ───────────────────
+        if total_api > 3 and no_match > 0:
+            match_rate = 1.0 - (no_match / total_api)
+            if match_rate < 0.3:
+                return {
+                    "detected": True,
+                    "confidence": 0.75,
+                    "reason": (
+                        f"API 响应匹配率仅 {match_rate:.0%} "
+                        f"({total_api - no_match}/{total_api})，"
+                        "字段模式可能已部分失效"
+                    ),
+                    "metrics": {**metrics, "match_rate": round(match_rate, 2)},
+                }
+            if match_rate < 0.6:
+                return {
+                    "detected": True,
+                    "confidence": 0.5,
+                    "reason": (
+                        f"API 响应匹配率 {match_rate:.0%} "
+                        f"({total_api - no_match}/{total_api})，"
+                        "部分 API 格式可能已变化，建议关注"
+                    ),
+                    "metrics": {**metrics, "match_rate": round(match_rate, 2)},
+                }
+
+        # ── 场景 4: 正常 ───────────────────────────
+        return {
+            "detected": False,
+            "confidence": 0.0,
+            "reason": "结构正常",
+            "metrics": metrics,
+        }
 
     def _extract_ad_data(self, url: str, body: Any) -> None:
         candidates = _find_all_dicts(body, _AD_FIELD_PATTERNS)
