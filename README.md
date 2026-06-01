@@ -1,151 +1,193 @@
 # 速卖通广告智能管理系统 (AliExpress Ad Manager)
 
-> AI 驱动的速卖通 (AliExpress) 广告数据分析、决策优化与自动化执行平台
+> AI 帮你自动分析速卖通广告效果、算利润、调价格，不用天天盯后台。
 
-## 项目概述
+---
 
-本系统为速卖通卖家提供一站式的广告数据采集、AI 利润分析、自动决策生成的智能化运营工具。核心技术栈：
+## 这是什么系统？
 
-- **后端**: FastAPI + SQLAlchemy (async) + PostgreSQL + Playwright
-- **前端**: React 18 + TypeScript + Tailwind CSS + Recharts
-- **AI**: Claude API (Anthropic Messages) 驱动的决策引擎
+一个**自动运营工具**，连接你的速卖通卖家后台，帮你做三件事：
 
-## 快速开始
+1. **看数据** — 自动采集每个商品的广告曝光、点击、花费、成交额
+2. **算利润** — 结合进价、物流费、平台佣金，算你到底赚多少
+3. **AI 出主意** — 分析哪些商品该加广告、哪些该降价、哪些该停投，自动执行或等你确认
 
-### 环境要求
+---
 
-- Python 3.10+ / Node.js 18+
-- PostgreSQL 14+ / Redis 6+
-- Playwright (Chromium 浏览器)
-- GitHub CLI (`gh`)
+## 快速启动（第一次使用）
 
-### 安装
+### 1. 配置环境变量
+
+复制 `.env.example` 为 `.env`，填入你的配置：
 
 ```bash
-# 1. 创建 Python 虚拟环境
-python -m venv .venv && source .venv/bin/activate  # Windows: .venv\Scripts\activate
+# 必须改的：
+ADMIN_API_KEY=设置一个登录密码
+LLM_API_KEY=你的AI接口key
 
-# 2. 安装依赖
+# 数据库（一般不用改）
+DB_HOST=localhost
+DB_USER=ad_manager
+DB_PASSWORD=数据库密码
+
+# 邮件通知（可选，不填也能用）
+SMTP_USER=你的@gmail.com
+SMTP_PASSWORD=Gmail应用密码
+ALERT_EMAIL_TO=接收警报的邮箱
+```
+
+### 2. 用 Docker 一键启动（推荐）
+
+```bash
+docker compose up -d
+```
+
+等 30 秒，访问 http://localhost:8000 就能看到网页了。
+
+### 3. 或者不用 Docker 手动启动
+
+```bash
+# 1. 装 Python 依赖
 pip install -r requirements.txt
+
+# 2. 装浏览器（用于自动采集）
 playwright install chromium
 
-# 3. 配置环境变量
-cp .env.example .env
-# 编辑 .env — 填入数据库连接、LLM API Key、SMTP 等信息
-
-# 4. 初始化数据库
+# 3. 初始化数据库
 alembic upgrade head
 
-# 5. 启动后端
-uvicorn App.main:app --reload --port 8000
+# 4. 启动（带防双开 + 日志 + 热重启）
+python scripts/start.py
 
-# 6. 启动前端（新终端）
+# 5. 新开一个窗口，启动前端
 cd frontend && npm install && npm run dev
 ```
 
-### 一键安装 Codex 工作流
+然后浏览器打开 http://localhost:5173
+
+---
+
+## 每天怎么用？
+
+### 启动系统
+
+**方式一（推荐）：装成开机自启**
+```bash
+# 右键点击 → 以管理员身份运行
+scripts\install-service.bat
+```
+装一次以后，每次电脑开机自动在后台启动。
+
+**方式二：手动启动**
+```bash
+python scripts/start.py
+```
+
+**方式三：在网页上重启**
+打开「系统设置」→ 点击「🔄 热重启」，服务会自动重启（断 3-5 秒）。
+
+### 日常操作流程
+
+```
+1. 打开网页 → 输入 API Key 登录
+2. 系统设置 → 点击「启动登录」→ 在弹出的浏览器登录速卖通
+3. 系统设置 → 点击「手动采集」→ 系统开始抓取广告数据
+4. 系统设置 → 点击「AI 分析」→ 系统计算利润并出建议
+5. 如果有待确认的操作 → 去「警报中心」确认或拒绝
+```
+
+### 防双开
+
+系统自带**防重复启动**机制。如果你不小心开了两次，第二次会提示：
+
+```
+[错误] 应用已在运行 (PID: 12345)
+       如需重启，请先停止现有进程
+```
+
+强行停止已运行的应用：
+```bash
+python scripts/start.py --stop
+```
+
+---
+
+## 日志在哪里看？
+
+### 方式一：网页上看
+
+打开「系统设置」→ 点击「📋 查看日志」，直接看到最近 200 行日志。
+
+### 方式二：直接打开文件
+
+日志文件在项目目录下的 `logs/app.log`，用记事本就能打开。
+
+### 方式三：Docker 查看（如果用 Docker 启动）
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/XuShan0425/-/main/install.sh | bash -s -- --profile python
+docker logs ad-manager-app
 ```
 
-## 系统架构
+### 日志里有什么？
 
-```
-┌────────────────────────────────────────────────┐
-│                  React Frontend                 │
-│  仪表盘 │ 商品管理 │ 日志中心 │ 警报 │ 报告 │ 设置  │
-└──────────────────┬─────────────────────────────┘
-                   │ REST API (X-API-Key)
-┌──────────────────▼─────────────────────────────┐
-│               FastAPI Backend                   │
-│ ┌──────────┐ ┌──────────┐ ┌──────────────────┐ │
-│ │ API v1   │ │ Services │ │  AI Pipeline     │ │
-│ │ routes   │ │ browser  │ │  profit → AI     │ │
-│ │ products │ │ scraper  │ │  → boundary      │ │
-│ │ analysis │ │ cookie   │ │  → execute       │ │
-│ │ alerts   │ │ email    │ │                  │ │
-│ └──────────┘ └──────────┘ └──────────────────┘ │
-└──────────────────┬─────────────────────────────┘
-                   │ asyncpg
-┌──────────────────▼─────────────────────────────┐
-│              PostgreSQL Database                │
-│  products │ ad_snapshots │ profit_analysis     │
-│  alerts │ operation_logs │ cookie_store        │
-└────────────────────────────────────────────────┘
+每条日志是一行 JSON，大概长这样：
+```json
+{"timestamp": "2026-06-01T10:00:00.000Z", "level": "INFO", "logger": "data_collector", "event": "采集完成", "ad_count": 15}
 ```
 
-## 核心功能模块
+- `level` = 级别：`INFO` 正常 / `WARNING` 要注意 / `ERROR` 出问题了
+- `logger` = 哪个模块：`data_collector` 采集 / `decision_engine` AI 分析 / `scheduler` 定时任务
+- `event` = 做了什么
 
-| 模块 | 功能 | API 前缀 |
-|------|------|---------|
-| 商品管理 | CRUD + CSV 导入 + 店铺同步 | `/api/v1/products` |
-| 数据采集 | Playwright 浏览器自动化拦截广告 API | `/api/v1/collect` |
-| AI 分析 | 利润计算 + AI 决策 + 边界检查 | `/api/v1/analysis` |
-| 执行引擎 | 自动/手动执行广告调整 | `/api/v1/execution` |
-| 费率管理 | 物流费率和平台佣金 AI 解析 | `/api/v1/rates` |
-| 警报中心 | 异常检测 + 邮件通知 + 全局停止 | `/api/v1/alerts` |
-| Cookie 管理 | 登录状态维护 + 健康检查 | `/api/v1/login` |
-| API Key | 鉴权管理 (创建/吊销) | `/api/v1/api-keys` |
+---
 
-## API 鉴权
+## 系统架构（简单版）
 
-所有 API（除 `/health` 和 `/system/status`）要求 `X-API-Key` Header。
+```
+你的浏览器 ──→ [网页控制台] ──→ [后端程序] ──→ [数据库]
+                                        │
+                                        └── [AI 接口] + [浏览器自动操作]
+```
 
-首次使用时，在 `.env` 中设置 `ADMIN_API_KEY`，前端登录页输入后会自动创建正式的 `ak-xxx` Key。
+- **网页控制台**：你看得见的页面
+- **后端程序**：干活的，采集数据、算利润、调价格
+- **数据库**：存数据的地方
+- **AI 接口**：帮你分析决策
+- **浏览器自动操作**：系统自己开浏览器去速卖通后台操作
 
-## 任务与执行计划
+---
 
+## 常见问题
+
+**Q: 网页打不开？**
+A: 先确认系统在运行。运行 `python scripts/start.py` 或打开 Docker Desktop 看容器是否在跑。
+
+**Q: 采集不到数据？**
+A: 去「系统设置」点「启动登录」重新登录速卖通。Cookie 过期了。
+
+**Q: AI 分析失败？**
+A: 检查 `.env` 里的 `LLM_API_KEY` 是否正确配置，以及 API 额度是否用完。
+
+**Q: 如何彻底关闭？**
 ```bash
-# 规划新特性
-codex exec "为 X 功能创建 EPIC 计划"
-
-# 执行计划中的任务
-codex exec "执行 TASK-001"
-
-# 完整的 EPIC → PR 工作流见 AGENTS.md
+python scripts/start.py --stop
 ```
 
-### 目录结构
-
-```
-.codex-tasks/
-├── active/       # 待执行的任务
-├── running/      # 执行中的任务
-├── pr-opened/    # 已提 PR
-├── completed/    # 已完成
-└── failed/       # 失败
-
-docs/exec-plans/
-├── active/       # 进行中的执行计划
-└── completed/    # 已完成的计划
-
-.codex-runs/      # 运行日志和验证证据
-```
-
-## 安全底线
-
-- **绝不自动合并 PR** — 所有 PR 需人工审查
-- **绝不提交到 `main`** — 自动化只操作 `codex/...` 分支
-- **拦截敏感文件** — `.env`、密钥文件不会进入版本控制
-- **数据库操作边界检查** — 所有 AI 决策通过硬/软边界验证
-- **全局停止机制** — 异常情况自动暂停所有自动操作
-
-## 环境变量参考
-
+**Q: 如何卸载开机自启？**
 ```bash
-# 数据库
-DB_HOST=localhost  DB_PORT=5432  DB_USER=ad_manager  DB_PASSWORD=xxx
-DB_NAME=ad_manager
-
-# LLM
-LLM_API_KEY=sk-ant-xxx  LLM_API_BASE_URL=https://api.anthropic.com  LLM_MODEL=claude-sonnet-4-6
-
-# 鉴权
-ADMIN_API_KEY=admin-bootstrap-key-change-me  SECRET_KEY=change-me
-
-# 邮件（Gmail SMTP + SOCKS5 代理）
-SMTP_HOST=smtp.gmail.com  SMTP_PORT=587  SMTP_USER=xxx@gmail.com
-SMTP_PASSWORD=xxx  SMTP_FROM=xxx@gmail.com  ALERT_EMAIL_TO=xxx@gmail.com
-SMTP_PROXY_HOST=127.0.0.1  SMTP_PROXY_PORT=7890
+schtasks /delete /tn "AdManager" /f
 ```
+
+---
+
+## 技术栈（给开发者看）
+
+| 组件 | 技术 |
+|------|------|
+| 后端框架 | FastAPI (Python 3.13) |
+| 数据库 | PostgreSQL 16 |
+| 缓存 | Redis 7 |
+| 前端 | React 18 + TypeScript + Tailwind |
+| 浏览器自动化 | Playwright |
+| AI | Claude API |
+| 容器 | Docker Compose |
