@@ -1,17 +1,35 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git:*)",
-      "Bash(poetry:*)",
-      "Bash(python:*)",
-      "Bash(pytest:*)",
-      "Bash(docker:*)",
-      "Bash(gh:*)",
-      "Bash(npm:*)",
-      "Bash(npx:*)",
-      "Bash(pip:*)",
-      "Bash(ruff:*)",
-      "Bash(mypy:*)"
+      "Bash(*)",
+      "Read(*)",
+      "Edit(*)",
+      "Write(*)",
+      "Glob(*)",
+      "Grep(*)",
+      "WebFetch(*)",
+      "WebSearch(*)",
+      "Skill(*)",
+      "Agent(*)",
+      "TaskCreate(*)",
+      "TaskUpdate(*)",
+      "TaskList(*)",
+      "TaskGet(*)",
+      "TaskOutput(*)",
+      "TaskStop(*)",
+      "Workflow(*)",
+      "AskUserQuestion(*)",
+      "EnterPlanMode(*)",
+      "ExitPlanMode(*)",
+      "EnterWorktree(*)",
+      "ExitWorktree(*)",
+      "ToolSearch(*)",
+      "NotebookEdit(*)",
+      "CronCreate(*)",
+      "CronDelete(*)",
+      "CronList(*)",
+      "ScheduleWakeup(*)",
+      "mcp__open-claude-in-chrome__*"
     ]
   }
 }

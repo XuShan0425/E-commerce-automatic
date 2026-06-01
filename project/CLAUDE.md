@@ -331,6 +331,7 @@ profit_analysis
 
 - `.claude/settings.json`：项目级权限与钩子配置。
 - `.claude/skills/`：项目自定义技能。
+- `.claude/workflows/`：项目自定义 Workflow 脚本（供 `agent-orchestrator` 使用）。
 - 数据库连接字符串、API Key 等敏感信息放在 `.env`，绝不提交。
 
 ### 可用技能
@@ -347,3 +348,4 @@ profit_analysis
 | `github` | GitHub PR / Issue 分类和路由 |
 | `find-skills` | 搜索和发现新技能 |
 | `auto-skill-installer` | 根据描述自动安装技能 |
+| `agent-orchestrator` | 自动编排 EPIC 全流程（分组 → 并行 worker → review → integrate → final PR） |

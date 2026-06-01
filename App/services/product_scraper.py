@@ -292,10 +292,105 @@ def _extract_from_json(obj, state: _InterceptState) -> None:
 
 # ── 同步抓取主函数 ────────────────────────────────
 
+PAGE_SIZES = [100, 200, 500, 9999]
+
+
+def _try_set_page_size(page, size: int) -> bool:
+    """尝试将分页大小改为指定值，返回是否成功。"""
+    try:
+        # AIT / Ant Design 分页器下拉
+        page_selectors = [
+            # AIT 分页 size 下拉
+            "select.ait-select",
+            "select.ait-pagination-size-changer",
+            '[class*="pagination"] select',
+            '[class*="page-size"] select',
+            ".ant-pagination-options select",
+            ".ant-select-selection-item",
+            # 页大小按钮
+            '[class*="page-size"]',
+            '[class*="page-changer"]',
+        ]
+        for sel in page_selectors:
+            el = page.query_selector(sel)
+            if el and el.is_visible():
+                el.click()
+                page.wait_for_timeout(500)
+                option = page.query_selector(f"option[value='{size}']")
+                if option:
+                    option.click()
+                    page.wait_for_timeout(2000)
+                    return True
+                # 尝试点击包含目标数字的选项
+                options = page.query_selector_all(f"option, li[class*='option'], [class*='menu'] li")
+                for opt in options:
+                    txt = opt.text_content().strip() if opt.text_content else ""
+                    if str(size) in txt:
+                        opt.click()
+                        page.wait_for_timeout(2000)
+                        return True
+        return False
+    except Exception:
+        return False
+
+
+def _click_next_page(page) -> bool:
+    """点击下一页按钮，返回是否成功点击。"""
+    try:
+        next_selectors = [
+            "button.ait-pagination-next:not([disabled])",
+            "button.ait-pagination-next:not(.ait-pagination-disabled)",
+            "li.ait-pagination-next:not(.ait-pagination-disabled)",
+            ".ait-pagination-next:not([aria-disabled='true'])",
+            "button.ant-pagination-next:not([disabled])",
+            'button[class*="next"]:not([disabled])',
+            'li[class*="next"]:not([disabled])',
+            'li[class*="next"]:not([class*="disabled"])',
+            '[class*="pagination"] [class*="next"]:not([class*="disabled"])',
+            # Fallback: aria-label
+            '[aria-label="Next Page"]:not([disabled])',
+            '[aria-label="下一页"]:not([disabled])',
+        ]
+        for sel in next_selectors:
+            els = page.query_selector_all(sel)
+            for el in els:
+                if el.is_visible() and el.is_enabled():
+                    el.click()
+                    return True
+        return False
+    except Exception:
+        return False
+
+
+def _get_total_pages(page) -> int:
+    """尝试从分页器获取总页数。"""
+    try:
+        js = """() => {
+            // Try AIT pagination total
+            const pag = document.querySelector('.ait-pagination, .ant-pagination, [class*="pagination"]');
+            if (!pag) return 0;
+            const text = pag.textContent || '';
+            // "共 3 页" or "1/3" or "Page 1 of 3"
+            const m = text.match(/共\\s*(\\d+)\\s*页/) || text.match(/(\\d+)\\s*页/) || text.match(/Page\\s+\\d+\\s+of\\s+(\\d+)/i) || text.match(/\\b(\\d+)\\s*$|\\/(\\d+)\\s*$/);
+            if (m) return parseInt(m[1] || m[2]) || 0;
+            // Count page buttons (excluding prev/next)
+            const btns = pag.querySelectorAll('li, button, [class*="page"]');
+            let nums = 0;
+            btns.forEach(b => {
+                const t = parseInt(b.textContent);
+                if (!isNaN(t)) nums = Math.max(nums, t);
+            });
+            return nums;
+        }"""
+        return page.evaluate(js) or 0
+    except Exception:
+        return 0
+
+
 def _run_scrape_sync(
     cookies: list[dict], headless: bool = False, timeout: int = 90
 ) -> dict:
-    """在同步线程中抓取店铺商品列表。"""
+    """在同步线程中抓取店铺全部商品列表（支持分页）。"""
     from App.services.browser import BrowserService
 
     result: dict = {
@@ -308,6 +403,7 @@ def _run_scrape_sync(
     t0 = time.perf_counter()
     browser_svc: BrowserService | None = None
     state = _InterceptState()
+    max_pages = 50  # 安全上限
 
     try:
         browser_svc = BrowserService(headless=headless)
@@ -343,72 +439,81 @@ def _run_scrape_sync(
 
         # ── 导航到商品列表页 ──────────────────
         page.goto(CSP_PRODUCT_LIST_URL, wait_until="domcontentloaded", timeout=30_000)
-        page.wait_for_timeout(3_000)
+        page.wait_for_timeout(5_000)
 
         try:
             page.wait_for_load_state("networkidle", timeout=25_000)
         except Exception:
             page.wait_for_timeout(10_000)
 
-        # 滚动触发懒加载和 API 调用
-        for _ in range(5):
-            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            page.wait_for_timeout(2_000)
-        page.evaluate("window.scrollTo(0, 0)")
+        # 尝试设置每页数量为 100
+        _try_set_page_size(page, 100)
         page.wait_for_timeout(3_000)
 
-        # ── 结果收集 ──────────────────────────
-        products: list[dict] = []
-        api_success = False
+        # ── 翻页采集循环 ──────────────────────
+        total_collected = 0
 
-        if state.products:
-            api_success = True
-            seen = set()
-            for p in state.products:
-                if p.sku_id not in seen:
-                    seen.add(p.sku_id)
-                    products.append({
-                        "sku_id": p.sku_id,
-                        "name": p.name,
-                        "current_price": p.current_price,
-                        "category": p.category,
-                        "listing_time": p.listing_time,
-                        "group": p.group_display or p.category,
-                    })
-            result["_extract_method"] = "api_intercept"
+        for page_num in range(1, max_pages + 1):
+            # 等待页面加载
+            try:
+                page.wait_for_load_state("networkidle", timeout=15_000)
+            except Exception:
+                page.wait_for_timeout(5_000)
 
-        # ── innerText 正则提取 (最可靠的名称来源) ──
-        text_products = _extract_from_inner_text(page)
-        text_ids = {p["sku_id"] for p in text_products}
+            # 滚动当前页触发所有懒加载
+            for _ in range(3):
+                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                page.wait_for_timeout(1_500)
+            page.evaluate("window.scrollTo(0, 0)")
+            page.wait_for_timeout(1_000)
 
-        # ── AIT DOM 提取 (补充 text 漏掉的产品) ─
-        dom_products = _extract_from_ait_dom(page)
+            # 从当前页 DOM 提取（兜底）
+            text_products = _extract_from_inner_text(page)
+            for tp in text_products:
+                pid = tp["sku_id"]
+                if pid not in {p["sku_id"] for p in result["products"]}:
+                    result["products"].append(tp)
 
-        # 合并: 优先用 text 提取的名称(更准确)，AIT DOM 做补充
-        product_map: dict[str, dict] = {}
-        for p in text_products:
-            product_map[p["sku_id"]] = p
-        for p in dom_products:
-            if p["sku_id"] not in product_map:
-                product_map[p["sku_id"]] = p
+            # 从 API 拦截的商品中补充
+            if state.products:
+                seen = {p["sku_id"] for p in result["products"]}
+                for p in state.products:
+                    if p.sku_id not in seen:
+                        seen.add(p.sku_id)
+                        result["products"].append({
+                            "sku_id": p.sku_id,
+                            "name": p.name,
+                            "current_price": p.current_price,
+                            "category": p.category,
+                            "listing_time": p.listing_time,
+                            "group": p.group_display or p.category,
+                        })
 
-        # 合并来自 API 的产品 (最高优先级)
-        api_ids = {p["sku_id"] for p in products}
-        for pid, pdata in product_map.items():
-            if pid not in api_ids:
-                products.append(pdata)
+            current_count = len(result["products"])
+            new_count = current_count - total_collected
+            total_collected = current_count
 
-        methods = []
-        if api_success:
-            methods.append("api_intercept")
-        if text_ids:
-            methods.append("text_regex")
-        if dom_products:
-            methods.append("ait_dom")
-        result["_extract_method"] = "+".join(methods)
+            print(f"  第 {page_num} 页: 新增 {new_count} 件, 累计 {current_count} 件")
 
-        result["products"] = products
+            # 尝试点击下一页
+            clicked = _click_next_page(page)
+            if not clicked:
+                print(f"  无更多页面，采集完成")
+                break
+
+            page.wait_for_timeout(3_000)
+
+        # ── 最终去重 ──────────────────────────
+        seen = set()
+        deduped = []
+        for p in result["products"]:
+            if p["sku_id"] not in seen:
+                seen.add(p["sku_id"])
+                deduped.append(p)
+        result["products"] = deduped
+
         result["success"] = True
+        result["_extract_method"] = "pagination"
         result["_api_stats"] = {
             "total_calls": state.total_calls,
             "matched_calls": state.matched_calls,
