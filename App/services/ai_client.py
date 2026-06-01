@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from typing import Any
 
@@ -71,7 +72,20 @@ async def _call_claude(
     }
 
     t_start = time.perf_counter()
-    async with httpx.AsyncClient(timeout=120.0) as client:
+
+    # 从环境变量读取代理配置（Docker 部署时由 docker-compose 传入）
+    _proxy: dict[str, str] | str | None = None
+    _http_proxy = os.environ.get("HTTP_PROXY", "").strip()
+    _https_proxy = os.environ.get("HTTPS_PROXY", "").strip()
+    _proxy_cfg: dict[str, str] = {}
+    if _http_proxy:
+        _proxy_cfg["http://"] = _http_proxy
+    if _https_proxy:
+        _proxy_cfg["https://"] = _https_proxy
+    if _proxy_cfg:
+        _proxy = _proxy_cfg
+
+    async with httpx.AsyncClient(timeout=120.0, proxies=_proxy) as client:
         response = await client.post(
             f"{settings.LLM_API_BASE_URL}/v1/messages",
             headers=headers,
