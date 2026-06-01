@@ -6,6 +6,7 @@ import { Products } from './pages/Products';
 import { Logs } from './pages/Logs';
 import { Alerts } from './pages/Alerts';
 import { Settings } from './pages/Settings';
+import { RatesSettings } from './pages/RatesSettings';
 import { Reports } from './pages/Reports';
 
 export function App() {
@@ -19,6 +20,7 @@ export function App() {
             <Route path="/logs" element={<Logs />} />
             <Route path="/alerts" element={<Alerts />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/rates-settings" element={<RatesSettings />} />
             <Route path="/reports" element={<Reports />} />
           </Routes>
         </Layout>
