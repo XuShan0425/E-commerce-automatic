@@ -8,6 +8,7 @@ This project bundles skills that opencode will auto-invoke when relevant:
 
 | Skill | Triggers when |
 |-------|--------------|
+| `agent-orchestrator` | Orchestrating full EPIC lifecycle — plan, group, execute, review, integrate |
 | `agent-planner` | Planning complex requirements into EPIC/TASK files |
 | `agent-worker` | Executing a task from `.codex-tasks/active/` |
 | `agent-reviewer` | Reviewing PRs or task implementations |
@@ -83,6 +84,25 @@ After finishing (MANDATORY):
 - **Do NOT skip PR creation** unless the user explicitly says "no PR".
 - Do not use `--no-pr` by default — the default is to create a PR.
 - If pre-existing lint or doc issues exist, fix them in the same task PR.
+
+## EPIC-level Orchestration
+
+When working on an EPIC that spans multiple tasks:
+
+1. Load `agent-orchestrator` and pass the EPIC file path.
+2. The orchestrator will:
+   - Read the EPIC and derive the task dependency graph.
+   - Group tasks by parallel safety (independent tasks run concurrently; dependent tasks wait).
+   - Fork one worktree per task in a parallel group.
+   - Execute tasks via `agent-worker` in each worktree.
+   - Run `agent-post-task` after each task completes.
+   - Review all task PRs via `agent-reviewer`.
+   - Create an integration branch, merge task PRs, run final verification.
+   - Open the final PR into `main`.
+3. Do **not** skip integration review — all task PRs must be reviewed before merging.
+4. The orchestrator never auto-merges. Every promotion (task → integration → main) is a PR that requires human approval.
+
+EPIC files live in `docs/exec-plans/active/` and follow the `EPIC-NNN.md` naming convention.
 
 ## Task Files
 
