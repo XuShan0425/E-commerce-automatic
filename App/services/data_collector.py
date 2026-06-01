@@ -13,6 +13,7 @@ from App.services.api_interceptor import AdDataInterceptor, CollectedAdData, Col
 from App.core.errors import ErrorCode, error_response
 from App.models.base import AdSnapshot, PriceSnapshot
 from App.models.system_state import is_global_stop_active
+from App.services.stealth import random_delay, MOUSE_TRAJECTORY_JS
 
 if TYPE_CHECKING:
     from App.services.browser import BrowserService
@@ -57,9 +58,15 @@ def _run_collection_sync(
         interceptor = AdDataInterceptor()
         interceptor.attach(page)
 
+        # 注入鼠标轨迹模拟脚本
+        page.add_init_script(MOUSE_TRAJECTORY_JS)
+
         # 逐个访问广告相关页面，等待 API 响应
         for page_url in AD_PAGES:
             try:
+                # 每个页面访问前增加随机延迟
+                random_delay(1.0, 3.0)
+
                 page.goto(
                     page_url,
                     wait_until="domcontentloaded",
@@ -67,9 +74,12 @@ def _run_collection_sync(
                 )
                 # 等待额外时间让 XHR/Fetch 请求完成
                 page.wait_for_timeout(max(2_000, timeout * 50))
-                # 滚动页面触发懒加载
+                # 随机延迟后滚动
+                random_delay(0.5, 2.0)
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 page.wait_for_timeout(2_000)
+                # 在页面间增加随机延迟
+                random_delay(1.0, 3.0)
             except Exception as exc:
                 result["errors"].append(f"页面 {page_url} 访问异常: {exc}")
 
