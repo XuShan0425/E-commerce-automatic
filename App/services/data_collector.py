@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -11,12 +10,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from App.services.api_interceptor import AdDataInterceptor, CollectedAdData, CollectedPriceData
 from App.core.errors import ErrorCode, error_response
+from App.core.logging import get_logger
 from App.models.base import AdSnapshot, PriceSnapshot
 from App.models.system_state import is_global_stop_active
 
 if TYPE_CHECKING:
     from App.services.browser import BrowserService
     from App.services.cookie_manager import CookieManager
+
+logger = get_logger(__name__)
 
 # ── 速卖通卖家中心页面 (2026-05-31 实测) ────────
 # 旧域名 gsp.aliexpress.com 已废弃，新架构统一用 csp.aliexpress.com
@@ -94,6 +96,39 @@ def _run_collection_sync(
     return result
 
 
+def _check_price_consistency(price_data: list[CollectedPriceData]) -> list[dict]:
+    """检查同一 SKU 的多来源价格是否一致。
+
+    同一 SKU 不同 API 来源的价格差异超过 5% 时记录警告。
+
+    Returns:
+        list of warning dicts (含 sku_id, price, avg_price, source_url)。
+    """
+    warnings: list[dict] = []
+    prices_by_sku: dict[str, list[tuple[str, float]]] = {}
+    for p in price_data:
+        if not p.sku_id or p.current_price <= 0:
+            continue
+        if p.sku_id not in prices_by_sku:
+            prices_by_sku[p.sku_id] = []
+        prices_by_sku[p.sku_id].append((p.source_url, p.current_price))
+
+    for sku_id, sources in prices_by_sku.items():
+        if len(sources) < 2:
+            continue
+        prices = [s[1] for s in sources]
+        avg = sum(prices) / len(prices)
+        for source_url, p in sources:
+            if avg > 0 and abs(p - avg) / avg > 0.05:
+                warnings.append({
+                    "sku_id": sku_id,
+                    "price": p,
+                    "avg_price": round(avg, 2),
+                    "source_url": source_url,
+                })
+    return warnings
+
+
 async def collect_ad_data(
     db: AsyncSession,
     cookie_manager: CookieManager,
@@ -129,7 +164,24 @@ async def collect_ad_data(
     saved_ads = 0
     saved_prices = 0
     now = datetime.now(timezone.utc)
+    price_data = raw.get("price_data", [])
 
+    # 价格一致性校验：同一 SKU 多来源价格差异超过 5% 时记日志
+    consistency_warnings = _check_price_consistency(
+        [p for p in price_data if isinstance(p, CollectedPriceData)]
+    )
+    for w in consistency_warnings:
+        logger.warn(
+            "price_inconsistency",
+            extra={
+                "sku_id": w["sku_id"],
+                "price": w["price"],
+                "avg_price": w["avg_price"],
+                "source_url": w["source_url"],
+            },
+        )
+
+    # 写入广告快照
     for ad in raw.get("ad_data", []):
         if not isinstance(ad, CollectedAdData):
             continue
@@ -151,20 +203,39 @@ async def collect_ad_data(
         db.add(snapshot)
         saved_ads += 1
 
-    for price in raw.get("price_data", []):
-        if not isinstance(price, CollectedPriceData):
-            continue
-        if not price.sku_id or price.current_price <= 0:
-            continue
-        snapshot = PriceSnapshot(
-            sku_id=price.sku_id,
-            snapshot_time=now,
-            current_price=price.current_price,
-        )
-        db.add(snapshot)
-        saved_prices += 1
+    # 写入价格快照（独立 try/except，不阻断主流程）
+    try:
+        for price in price_data:
+            if not isinstance(price, CollectedPriceData):
+                continue
+            if not price.sku_id or price.current_price <= 0:
+                continue
+            snapshot = PriceSnapshot(
+                sku_id=price.sku_id,
+                snapshot_time=now,
+                current_price=price.current_price,
+            )
+            db.add(snapshot)
+            saved_prices += 1
 
-    await db.flush()
+        await db.flush()
+    except Exception as exc:
+        logger.error(
+            "price_snapshot_write_failed",
+            extra={"error": str(exc), "price_count": len(price_data)},
+        )
+        # 价格写入失败不阻断流程，回滚当前 session 中的 price 写入
+        # 但保留 ad 数据
+
+    # 如果本次采集没有任何价格记录，记录警告（不影响成功状态）
+    if saved_prices == 0:
+        logger.warn(
+            "no_price_snapshots_collected",
+            extra={
+                "ad_count": saved_ads,
+                "total_responses": raw.get("total_responses", 0),
+            },
+        )
 
     return {
         "success": True,
