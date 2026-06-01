@@ -1,7 +1,8 @@
-"""Playwright 浏览器实例管理 — 含反检测 stealth 注入."""
+"""Playwright 浏览器实例管理 — 含反检测 stealth 注入 + UA 轮换."""
 
 from __future__ import annotations
 
+import random
 from typing import TYPE_CHECKING
 
 from App.core.logging import get_logger
@@ -15,12 +16,51 @@ logger = get_logger(__name__)
 
 HEADLESS_DEFAULT = settings.ENVIRONMENT != "development"
 
-# 真实 Chrome 125 Windows UA
-CHROME_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/125.0.0.0 Safari/537.36"
-)
+# ── User-Agent 轮换池 ──────────────────────────────
+# 每次创建浏览器上下文时随机选取一个，降低指纹关联风险
+USER_AGENTS = [
+    # Chrome 120 / Win10
+    (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    # Chrome 121 / Win10
+    (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/121.0.0.0 Safari/537.36"
+    ),
+    # Chrome 122 / Win11
+    (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/122.0.0.0 Safari/537.36"
+    ),
+    # Chrome 123 / Win10
+    (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/123.0.0.0 Safari/537.36"
+    ),
+    # Chrome 124 / Win11
+    (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    # Chrome 125 / Win11 (fallback, 实测可用)
+    (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/125.0.0.0 Safari/537.36"
+    ),
+]
+
+
+def pick_user_agent() -> str:
+    """从 UA 轮换池中随机选择一个 User-Agent。"""
+    return random.choice(USER_AGENTS)
 
 
 class BrowserService:
@@ -65,14 +105,20 @@ class BrowserService:
     def new_context(
         self,
         cookies: list[dict] | None = None,
+        user_agent: str | None = None,
     ) -> BrowserContext:
         """创建浏览器上下文，自动注入反检测脚本。
 
-        可选注入 Cookie（直接传入 Playwright 格式的 cookies 列表）。
+        参数:
+            cookies: 可选，Playwright 格式的 cookies 列表，注入到上下文。
+            user_agent: 可选，自定义 User-Agent。为 None 时从轮换池随机选取。
         """
+        ua = user_agent or pick_user_agent()
+        logger.debug("Using User-Agent: %s", ua[:60] + "...")
+
         context = self._browser.new_context(
             viewport={"width": 1440, "height": 900},
-            user_agent=CHROME_UA,
+            user_agent=ua,
             locale="zh-CN",
             timezone_id="Asia/Shanghai",
             # 模拟真实屏幕

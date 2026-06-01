@@ -2,158 +2,22 @@
 
 from __future__ import annotations
 
-import asyncio
+import json
 import time
-from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from App.services.api_interceptor import AdDataInterceptor, CollectedAdData, CollectedPriceData
 from App.core.errors import ErrorCode, error_response
-from App.core.logging import get_logger
 from App.models.base import AdSnapshot, PriceSnapshot
 from App.models.system_state import is_global_stop_active
+from App.services.stealth import random_delay, MOUSE_TRAJECTORY_JS
 
 if TYPE_CHECKING:
     from App.services.browser import BrowserService
     from App.services.cookie_manager import CookieManager
-
-logger = get_logger(__name__)
-
-
-# ── 重试策略 ──────────────────────────────────────
-
-@dataclass
-class RetryConfig:
-    """指数退避重试配置。"""
-
-    max_retries: int = 3
-    base_delay: float = 2.0  # 首次重试延迟 (秒)
-    backoff_factor: float = 2.0  # 指数退避因子
-
-
-# 不可重试的异常基类标记
-class NonRetryableError(Exception):
-    """标记为不可重试的异常。任何继承自此类或其子类的异常都不会被重试。"""
-    pass
-
-
-class CookieOrAuthError(NonRetryableError):
-    """Cookie 失效 / 登录失败 / 认证相关异常 — 应触发硬边界警报。"""
-    pass
-
-
-class BrowserCrashError(NonRetryableError):
-    """浏览器崩溃异常 — 应重启浏览器。"""
-    pass
-
-
-_RETRYABLE_EXCEPTIONS: tuple[type[Exception], ...] = (
-    asyncio.TimeoutError,
-    TimeoutError,
-    ConnectionError,
-    ConnectionResetError,
-    ConnectionAbortedError,
-    ConnectionRefusedError,
-)
-
-
-def is_retryable(exc: Exception) -> bool:
-    """判断异常是否可重试。
-
-    规则：
-    - 继承自 NonRetryableError 的异常 → 不可重试
-    - 属于 _RETRYABLE_EXCEPTIONS 元组中的类型 → 可重试
-    - 其余异常 → 不可重试
-    """
-    if isinstance(exc, NonRetryableError):
-        return False
-    return isinstance(exc, _RETRYABLE_EXCEPTIONS)
-
-
-def is_http_5xx(exc: Exception) -> bool:
-    """判断异常消息是否暗示 HTTP 5xx 响应码。"""
-    msg = str(exc).lower()
-    return any(f"5{x}" in msg for x in range(0, 10, 1))
-
-
-def _calc_delay(attempt: int, config: RetryConfig) -> float:
-    """计算第 attempt 次重试的等待时间（指数退避）。"""
-    return config.base_delay * (config.backoff_factor ** (attempt - 1))
-
-
-def with_retry(
-    fn: Callable[[], Any],
-    config: RetryConfig | None = None,
-    context: str = "",
-) -> Any:
-    """通用同步重试包装器。
-
-    使用指数退避策略处理可恢复错误。不可重试的异常直接透传。
-    浏览器崩溃 / 页面 crash 会被转换为 BrowserCrashError 透传。
-
-    Args:
-        fn: 要执行的同步可调用对象。
-        config: 重试配置（默认 RetryConfig()）。
-        context: 日志上下文描述，如访问的页面 URL。
-
-    Returns:
-        fn 的返回值。
-
-    Raises:
-        透传 fn 抛出的任何异常（重试耗尽后抛出最后一次异常）。
-    """
-    cfg = config or RetryConfig()
-    last_exc: Exception | None = None
-
-    for attempt in range(1, cfg.max_retries + 2):  # +1 表示首次执行
-        try:
-            return fn()
-        except Exception as exc:
-            last_exc = exc
-
-            # 页面崩溃 / 浏览器断开 — 包装为 BrowserCrashError 透传
-            if _looks_like_page_crash(exc):
-                raise BrowserCrashError(str(exc)) from exc
-
-            # 不可重试异常 → 直接透传
-            if not is_retryable(exc) and not is_http_5xx(exc):
-                raise
-
-            if attempt > cfg.max_retries:
-                # 重试耗尽
-                logger.error(
-                    "retry_exhausted",
-                    extra={
-                        "context": context,
-                        "attempt": attempt - 1,
-                        "max_retries": cfg.max_retries,
-                        "exception_type": type(exc).__name__,
-                        "error": str(exc),
-                    },
-                )
-                raise
-
-            # 计算并等待
-            delay = _calc_delay(attempt, cfg)
-            logger.warn(
-                "retry_attempt",
-                extra={
-                    "context": context,
-                    "attempt": attempt,
-                    "max_retries": cfg.max_retries,
-                    "next_delay_seconds": delay,
-                    "exception_type": type(exc).__name__,
-                    "error": str(exc),
-                },
-            )
-            time.sleep(delay)
-
-    # 不会到达这里，但满足类型检查
-    assert last_exc is not None
-    raise last_exc
 
 # ── 速卖通卖家中心页面 (2026-05-31 实测) ────────
 # 旧域名 gsp.aliexpress.com 已废弃，新架构统一用 csp.aliexpress.com
@@ -163,23 +27,6 @@ AD_PAGES = [
     "https://csp.aliexpress.com/m_apps/p4p-pages/home?p4p_enter_from=sidebar",  # P4P 站内推广
     "https://csp.aliexpress.com/m_apps/all-in-one-promotion/home",  # 一站式推广
 ]
-
-
-# ── 用于判断 Playwright 页面崩溃的辅助函数 ──────────
-_PAGE_CRASH_KEYWORDS = [
-    "page.crashed",
-    "page.worker_terminated",
-    "target closed",
-    "browser has been disconnected",
-    "protocol error",
-    "crash",
-]
-
-
-def _looks_like_page_crash(exc: Exception) -> bool:
-    """通过异常消息推测是否为页面崩溃/浏览器断开等不可重试错误。"""
-    msg = str(exc).lower()
-    return any(kw in msg for kw in _PAGE_CRASH_KEYWORDS)
 
 
 def _run_collection_sync(
@@ -211,21 +58,30 @@ def _run_collection_sync(
         interceptor = AdDataInterceptor()
         interceptor.attach(page)
 
-        retry_cfg = RetryConfig()
+        # 注入鼠标轨迹模拟脚本
+        page.add_init_script(MOUSE_TRAJECTORY_JS)
 
         # 逐个访问广告相关页面，等待 API 响应
         for page_url in AD_PAGES:
             try:
-                with_retry(
-                    lambda url=page_url: _navigate_and_wait(page, url, timeout),
-                    config=retry_cfg,
-                    context=f"page_goto:{page_url}",
+                # 每个页面访问前增加随机延迟
+                random_delay(1.0, 3.0)
+
+                page.goto(
+                    page_url,
+                    wait_until="domcontentloaded",
+                    timeout=min(30_000, timeout * 1000),
                 )
-            except NonRetryableError:
-                # 不可重试的异常（Cookie 失效、浏览器崩溃等）→ 立即终止全部采集
-                raise
+                # 等待额外时间让 XHR/Fetch 请求完成
+                page.wait_for_timeout(max(2_000, timeout * 50))
+                # 随机延迟后滚动
+                random_delay(0.5, 2.0)
+                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                page.wait_for_timeout(2_000)
+                # 在页面间增加随机延迟
+                random_delay(1.0, 3.0)
             except Exception as exc:
-                result["errors"].append(f"页面 {page_url} 访问异常 (重试耗尽): {exc}")
+                result["errors"].append(f"页面 {page_url} 访问异常: {exc}")
 
         page.close()
         context.close()
@@ -238,26 +94,6 @@ def _run_collection_sync(
         result["ad_api_responses"] = interceptor.result.ad_api_responses
         result["success"] = True
 
-        # ── 结构变更检测 ──────────────────────────
-        change_report = interceptor.detect_structure_change()
-        result["structure_change"] = change_report
-        if change_report["detected"]:
-            logger.warn(
-                "structure_change_detected",
-                extra={
-                    "confidence": change_report["confidence"],
-                    "reason": change_report["reason"],
-                    "metrics": change_report["metrics"],
-                },
-            )
-            result["errors"].append(
-                f"结构变更检测 ({change_report['confidence']:.0%} 置信度): "
-                f"{change_report['reason']}"
-            )
-
-    except NonRetryableError as exc:
-        # 不可重试异常 — 写入错误列表，不覆盖 success 标记
-        result["errors"].append(f"不可恢复的采集异常: {exc}")
     except Exception as exc:
         result["errors"].append(f"采集流程异常: {exc}")
     finally:
@@ -266,20 +102,6 @@ def _run_collection_sync(
         result["duration_seconds"] = round(time.perf_counter() - t0, 2)
 
     return result
-
-
-def _navigate_and_wait(page: Any, url: str, timeout: int) -> None:
-    """执行单次页面导航 + 等待 + 滚动。作为 with_retry 的目标函数。"""
-    page.goto(
-        url,
-        wait_until="domcontentloaded",
-        timeout=min(30_000, timeout * 1000),
-    )
-    # 等待额外时间让 XHR/Fetch 请求完成
-    page.wait_for_timeout(max(2_000, timeout * 50))
-    # 滚动页面触发懒加载
-    page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-    page.wait_for_timeout(2_000)
 
 
 async def collect_ad_data(
@@ -310,19 +132,6 @@ async def collect_ad_data(
         return error_response(
             ErrorCode.NETWORK_ERROR,
             "数据采集失败: " + "; ".join(raw.get("errors", [])),
-        )
-
-    # ── 结构变更检测: 高置信度 → 停止本次写入 ──────
-    change_report = raw.get("structure_change", {})
-    if change_report.get("detected") and change_report.get("confidence", 0) >= 0.8:
-        return error_response(
-            ErrorCode.PAGE_CHANGED,
-            change_report.get("reason", "速卖通 API 结构可能已变更"),
-            details={
-                "confidence": change_report.get("confidence"),
-                "metrics": change_report.get("metrics", {}),
-                "action": "请检查速卖通后台是否改版，更新 URL/字段模式后重试",
-            },
         )
 
     # ── 写入数据库 ────────────────────────────────
