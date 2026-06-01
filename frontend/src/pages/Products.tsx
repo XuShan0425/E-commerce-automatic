@@ -4,6 +4,8 @@ import { useApp } from '../contexts/AppContext';
 import { ProductModal } from '../components/ProductModal';
 import { CsvPreviewModal } from '../components/CsvPreviewModal';
 import { StoreProductModal } from '../components/StoreProductModal';
+import { PriceTrendChart } from '../components/PriceTrendChart';
+import { PriceThresholdSetting } from '../components/PriceThresholdSetting';
 
 interface Product {
   id: number;
@@ -59,6 +61,9 @@ export function Products() {
 
   // store product modal state
   const [storeModalOpen, setStoreModalOpen] = useState(false);
+
+  // selected product for price trend
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 
   // ── 加载数据 ──
   async function loadProducts(filter?: string) {
@@ -334,6 +339,7 @@ export function Products() {
                       <td className="px-4 py-2">{p.category || '-'}</td>
                       <td className="px-4 py-2 flex gap-2">
                         <button onClick={() => handleUpdateProduct(p)} className="text-blue-600 hover:underline text-xs">编辑</button>
+                        <button onClick={() => setSelectedProduct(selectedProduct?.id === p.id ? null : p)} className="text-green-600 hover:underline text-xs">趋势</button>
                         <button onClick={() => handleDeleteProduct(p.id)} className="text-red-600 hover:underline text-xs">删除</button>
                       </td>
                     </tr>
@@ -343,6 +349,37 @@ export function Products() {
             </div>
           )}
         </>
+      )}
+
+      {/* ── 价格趋势 ── */}
+      {tab === 'products' && selectedProduct && (
+        <div className="mt-4">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-base font-semibold text-gray-700">
+              {selectedProduct.name}
+              <span className="ml-2 font-mono text-sm text-gray-400 font-normal">
+                ({selectedProduct.sku_id})
+              </span>
+            </h2>
+            <button
+              onClick={() => setSelectedProduct(null)}
+              className="text-xs text-gray-400 hover:text-gray-600"
+            >
+              关闭
+            </button>
+          </div>
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+            <div className="xl:col-span-2">
+              <PriceTrendChart
+                skuId={selectedProduct.sku_id}
+                productName={selectedProduct.name}
+              />
+            </div>
+            <div>
+              <PriceThresholdSetting skuId={selectedProduct.sku_id} />
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── 管理跟踪 ── */}
