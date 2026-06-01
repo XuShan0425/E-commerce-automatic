@@ -8,7 +8,6 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-
 HOOK_PATH = Path(__file__).resolve().parents[1] / ".codex/hooks/stop_auto_pr.py"
 
 

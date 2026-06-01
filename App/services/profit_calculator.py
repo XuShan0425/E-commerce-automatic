@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-
-from App.core.logging import get_logger
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from App.core.logging import get_logger
 from App.models.base import (
     AdSnapshot,
     LogisticsRate,
@@ -53,7 +52,7 @@ async def _get_platform_fee_rate(db: AsyncSession, category: str | None) -> floa
 
 
 async def _get_ad_snapshots_7d(db: AsyncSession, sku_id: str) -> list[AdSnapshot]:
-    since = datetime.now(timezone.utc) - timedelta(days=7)
+    since = datetime.now(UTC) - timedelta(days=7)
     result = await db.execute(
         select(AdSnapshot)
         .where(AdSnapshot.sku_id == sku_id, AdSnapshot.snapshot_time >= since)
@@ -153,7 +152,7 @@ async def compute_profit(db: AsyncSession, sku_id: str) -> ProfitAnalysis:
     Returns:
         保存后的 ProfitAnalysis 记录
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # 1. 商品信息
     product = await _get_product(db, sku_id)
@@ -238,8 +237,14 @@ async def compute_profit(db: AsyncSession, sku_id: str) -> ProfitAnalysis:
     await db.refresh(analysis)
 
     logger.info(
-        "利润计算完成: SKU=%s price=%.2f cost=%.2f margin=%.2f%% roi=%.2f",
-        sku_id, current_price, true_cost, gross_margin * 100, current_roi,
+        "利润计算完成",
+        extra={
+            "sku_id": sku_id,
+            "price": current_price,
+            "cost": round(true_cost, 2),
+            "margin_pct": round(gross_margin * 100, 2),
+            "roi": round(current_roi, 2),
+        },
     )
 
     return analysis

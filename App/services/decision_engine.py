@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
-
-from App.core.logging import get_logger
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from App.models.base import AdSnapshot, PriceSnapshot, ProfitAnalysis
+from App.core.logging import get_logger
+from App.models.base import AdSnapshot, ProfitAnalysis
 from App.services.ai_client import _call_claude
 
 logger = get_logger(__name__)
@@ -131,8 +130,8 @@ def _parse_decision_response(raw: str) -> dict[str, Any]:
     try:
         result = json.loads(cleaned)
     except json.JSONDecodeError as exc:
-        logger.error("决策 JSON 解析失败: %s", exc)
-        logger.debug("原始响应: %s", raw)
+        logger.error("决策 JSON 解析失败", extra={"error": str(exc)})
+        logger.debug("原始响应", extra={"raw": raw[:500]})
         # 返回一个安全的 fallback
         return {
             "decision_type": "no_action",
@@ -192,7 +191,7 @@ async def generate_decision(
 
     prompt = json.dumps(input_data, ensure_ascii=False, indent=2)
 
-    logger.info("正在为 SKU '%s' 生成广告决策...", sku_id)
+    logger.info("正在为 SKU 生成广告决策...", extra={"sku_id": sku_id})
     raw_response = await _call_claude(
         prompt,
         system_prompt=DECISION_SYSTEM_PROMPT,
@@ -201,13 +200,17 @@ async def generate_decision(
     )
 
     decision = _parse_decision_response(raw_response)
-    decision["_generated_at"] = datetime.now(timezone.utc).isoformat()
+    decision["_generated_at"] = datetime.now(UTC).isoformat()
     decision["_sku_id"] = sku_id
 
     logger.info(
-        "决策完成: SKU=%s type=%s risk=%s confidence=%.2f",
-        sku_id, decision.get("decision_type"),
-        decision.get("risk_level"), decision.get("confidence", 0),
+        "决策完成",
+        extra={
+            "sku_id": sku_id,
+            "decision_type": decision.get("decision_type"),
+            "risk_level": decision.get("risk_level"),
+            "confidence": decision.get("confidence", 0),
+        },
     )
 
     return decision

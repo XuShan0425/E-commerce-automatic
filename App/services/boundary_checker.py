@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-
-from App.core.logging import get_logger
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from App.core.logging import get_logger
 from App.models.base import ProfitAnalysis
 from App.models.cookie import CookieStore
 from App.models.system_state import is_global_stop_active
@@ -67,7 +66,7 @@ async def check_boundaries(
     cookie_result = await db.execute(
         select(CookieStore).where(
             CookieStore.domain == "aliexpress.com",
-            CookieStore.is_valid == True,
+            CookieStore.is_valid,
         )
     )
     valid_cookie = cookie_result.scalar_one_or_none()
@@ -163,8 +162,8 @@ async def check_boundaries(
 
     # ── 通过 ──────────────────────────────────────
     if not reasons:
-        logger.info("边界检查通过: SKU=%s decision=%s", sku_id, decision_type)
+        logger.info("边界检查通过", extra={"sku_id": sku_id, "decision_type": decision_type})
         return BoundaryResult(passed=True)
 
-    logger.warning("边界检查未通过: SKU=%s reason=%s", sku_id, "; ".join(reasons))
+    logger.warning("边界检查未通过", extra={"sku_id": sku_id, "reason": "; ".join(reasons)})
     return BoundaryResult(passed=False, reason="; ".join(reasons), details=details)

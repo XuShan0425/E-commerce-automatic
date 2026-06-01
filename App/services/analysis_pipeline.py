@@ -74,7 +74,7 @@ async def analyze_single_sku(
         }
     except Exception as exc:
         result["error"] = f"利润计算失败: {exc}"
-        logger.exception("利润计算失败: SKU=%s", sku_id)
+        logger.exception("利润计算失败", extra={"sku_id": sku_id})
         return result
 
     # ── Step 2: AI 决策生成 ────────────────────────
@@ -148,14 +148,23 @@ async def analyze_single_sku(
             "boundary_type": "hard",
             "reason": f"边界检查异常: {exc}",
         }
-        logger.exception("边界检查异常: SKU=%s", sku_id)
+        logger.exception("边界检查异常", extra={"sku_id": sku_id})
 
     result["success"] = True
+    decision_type = (
+        result["decision"].get("decision_type", "?")
+        if result.get("decision") else "?"
+    )
+    boundary_status = (
+        "passed" if result.get("boundary", {}).get("passed") else "blocked"
+    )
     logger.info(
-        "分析完成: SKU=%s profit_ok=True ai=%s boundary=%s",
-        sku_id,
-        result["decision"].get("decision_type", "?"),
-        "passed" if result["boundary"]["passed"] else "blocked",
+        "分析完成",
+        extra={
+            "sku_id": sku_id,
+            "decision_type": decision_type,
+            "boundary": boundary_status,
+        },
     )
     return result
 

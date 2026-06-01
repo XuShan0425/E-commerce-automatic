@@ -7,11 +7,10 @@ import os
 import time
 from typing import Any
 
-from App.core.logging import get_logger
-
 import httpx
 
 from App.core.config import settings
+from App.core.logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -149,7 +148,10 @@ async def parse_html_to_json(
 """
 
     raw_response = await _call_claude(prompt)
-    logger.debug("Claude raw response (first 500 chars): %s", raw_response[:500])
+    logger.debug(
+        "Claude raw response (first 500 chars)",
+        extra={"response_preview": raw_response[:500]},
+    )
 
     # Claude 可能返回带 ```json ... ``` 包裹的 JSON，去掉包裹标记
     cleaned = raw_response.strip()
@@ -165,8 +167,8 @@ async def parse_html_to_json(
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError as exc:
-        logger.error("Failed to parse Claude response as JSON: %s", exc)
-        logger.debug("Raw response (full): %s", raw_response)
+        logger.error("Failed to parse Claude response as JSON", extra={"error": str(exc)})
+        logger.debug("Raw response (first 500 chars)", extra={"raw": raw_response[:500]})
         raise ValueError(
             f"AI 返回的内容无法解析为 JSON。原始响应: {raw_response[:500]}"
         ) from exc
