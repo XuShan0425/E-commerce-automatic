@@ -2,19 +2,20 @@ import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { ApiKeyGuard } from './components/ApiKeyGuard';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 // Lazy-loaded page components – reduces initial bundle size
-const Dashboard = lazy(() => import('./pages/Dashboard'));
-const Products = lazy(() => import('./pages/Products'));
-const Logs = lazy(() => import('./pages/Logs'));
-const Alerts = lazy(() => import('./pages/Alerts'));
-const Settings = lazy(() => import('./pages/Settings'));
-const RatesSettings = lazy(() => import('./pages/RatesSettings'));
-const Reports = lazy(() => import('./pages/Reports'));
-const ABTesting = lazy(() => import('./pages/ABTesting'));
-const ExportPage = lazy(() => import('./pages/Export'));
-const Webhooks = lazy(() => import('./pages/Webhooks'));
-const Competitors = lazy(() => import('./pages/Competitors'));
+const Dashboard = lazy(() => import('./pages/Dashboard').then(m => ({ default: m.Dashboard })));
+const Products = lazy(() => import('./pages/Products').then(m => ({ default: m.Products })));
+const Logs = lazy(() => import('./pages/Logs').then(m => ({ default: m.Logs })));
+const Alerts = lazy(() => import('./pages/Alerts').then(m => ({ default: m.Alerts })));
+const Settings = lazy(() => import('./pages/Settings').then(m => ({ default: m.Settings })));
+const RatesSettings = lazy(() => import('./pages/RatesSettings').then(m => ({ default: m.RatesSettings })));
+const Reports = lazy(() => import('./pages/Reports').then(m => ({ default: m.Reports })));
+const ABTesting = lazy(() => import('./pages/ABTesting').then(m => ({ default: m.ABTesting })));
+const ExportPage = lazy(() => import('./pages/Export').then(m => ({ default: m.Export })));
+const Webhooks = lazy(() => import('./pages/Webhooks').then(m => ({ default: m.Webhooks })));
+const Competitors = lazy(() => import('./pages/Competitors').then(m => ({ default: m.Competitors })));
 
 function PageLoading() {
   return (
@@ -29,8 +30,9 @@ export function App() {
     <BrowserRouter>
       <ApiKeyGuard>
         <Layout>
-          <Suspense fallback={<PageLoading />}>
-            <Routes>
+          <ErrorBoundary>
+            <Suspense fallback={<PageLoading />}>
+              <Routes>
               <Route path="/" element={<Dashboard />} />
               <Route path="/products" element={<Products />} />
               <Route path="/competitors" element={<Competitors />} />
@@ -44,6 +46,7 @@ export function App() {
               <Route path="/export" element={<ExportPage />} />
             </Routes>
           </Suspense>
+          </ErrorBoundary>
         </Layout>
       </ApiKeyGuard>
     </BrowserRouter>

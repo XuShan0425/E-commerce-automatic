@@ -162,3 +162,37 @@ CREATE TABLE IF NOT EXISTS operation_logs (
 
 CREATE INDEX idx_op_logs_sku ON operation_logs (sku_id, executed_at);
 CREATE INDEX idx_op_logs_status ON operation_logs (status);
+
+-- ============================================================
+-- Webhook 订阅表
+-- ============================================================
+CREATE TABLE IF NOT EXISTS webhook_subscriptions (
+    id          SERIAL PRIMARY KEY,
+    url         VARCHAR(1024) NOT NULL,
+    secret      VARCHAR(256) NOT NULL,
+    events      JSONB NOT NULL DEFAULT '[]'::jsonb,
+    description VARCHAR(500),
+    is_active   BOOLEAN NOT NULL DEFAULT true,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_webhook_subscriptions_active ON webhook_subscriptions (is_active);
+
+-- ============================================================
+-- Webhook 投递日志表
+-- ============================================================
+CREATE TABLE IF NOT EXISTS webhook_delivery_logs (
+    id              SERIAL PRIMARY KEY,
+    subscription_id INTEGER NOT NULL,
+    event_type      VARCHAR(100) NOT NULL,
+    payload         JSONB,
+    status          VARCHAR(20) NOT NULL DEFAULT 'pending',
+    attempt         INTEGER NOT NULL DEFAULT 1,
+    response_status INTEGER,
+    error_message   TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_webhook_delivery_logs_sub ON webhook_delivery_logs (subscription_id);
+CREATE INDEX IF NOT EXISTS idx_webhook_delivery_logs_created ON webhook_delivery_logs (created_at);
