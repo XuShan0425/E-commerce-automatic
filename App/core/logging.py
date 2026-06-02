@@ -27,7 +27,7 @@ class JsonFormatter(logging.Formatter):
             "event": record.getMessage(),
         }
 
-        if record.exc_info and record.exc_info[1]:
+        if record.exc_info and isinstance(record.exc_info, tuple) and record.exc_info[1]:
             payload["exception"] = str(record.exc_info[1])
 
         for key, value in getattr(record, "extra_fields", {}).items():
@@ -37,19 +37,34 @@ class JsonFormatter(logging.Formatter):
 
 
 class StructuredLogger(logging.Logger):
-    def info(self, msg: str, extra: dict[str, Any] | None = None, **kwargs: Any) -> None:
+    def info(self, msg: str, *args: Any, extra: dict[str, Any] | None = None, **kwargs: Any) -> None:
+        if args:
+            msg = msg % args
         self._log_with_extra(logging.INFO, msg, extra, **kwargs)
 
-    def warn(self, msg: str, extra: dict[str, Any] | None = None, **kwargs: Any) -> None:
+    def warn(self, msg: str, *args: Any, extra: dict[str, Any] | None = None, **kwargs: Any) -> None:
+        if args:
+            msg = msg % args
         self._log_with_extra(logging.WARNING, msg, extra, **kwargs)
 
-    def error(self, msg: str, extra: dict[str, Any] | None = None, **kwargs: Any) -> None:
+    def error(self, msg: str, *args: Any, extra: dict[str, Any] | None = None, **kwargs: Any) -> None:
+        if args:
+            msg = msg % args
         self._log_with_extra(logging.ERROR, msg, extra, **kwargs)
 
-    def debug(self, msg: str, extra: dict[str, Any] | None = None, **kwargs: Any) -> None:
+    def debug(self, msg: str, *args: Any, extra: dict[str, Any] | None = None, **kwargs: Any) -> None:
+        if args:
+            msg = msg % args
         self._log_with_extra(logging.DEBUG, msg, extra, **kwargs)
 
     def _log_with_extra(self, level: int, msg: str, extra: dict[str, Any] | None, **kwargs: Any) -> None:
+        exc_info = kwargs.pop("exc_info", None)
+        # Python 3.13 no longer auto-resolves exc_info=True to sys.exc_info()
+        if exc_info is True:
+            exc_info = sys.exc_info()
+        if not exc_info:
+            exc_info = None
+
         record = logging.LogRecord(
             name=self.name,
             level=level,
@@ -57,7 +72,7 @@ class StructuredLogger(logging.Logger):
             lineno=0,
             msg=msg,
             args=(),
-            exc_info=kwargs.pop("exc_info", None),
+            exc_info=exc_info,
         )
         record.extra_fields = extra or {}
         for k, v in (kwargs or {}).items():

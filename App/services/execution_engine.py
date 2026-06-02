@@ -155,7 +155,7 @@ async def execute_decision(
             )
 
     except Exception as exc:
-        logger.exception("执行异常: SKU=%s type=%s", sku_id, decision_type)
+        logger.exception("执行异常", extra={"sku_id": sku_id, "decision_type": decision_type})
         await log_operation(
             db, sku_id, decision_type,
             field_name=action.get("field"),
@@ -361,8 +361,12 @@ async def reject_pending(
 
     await update_log_status(db, operation_log_id, "rejected")
     logger.info(
-        "已拒绝操作: log_id=%d SKU=%s type=%s",
-        operation_log_id, log.sku_id, log.operation_type,
+        "已拒绝操作",
+        extra={
+            "log_id": operation_log_id,
+            "sku_id": log.sku_id,
+            "operation_type": log.operation_type,
+        },
     )
 
     return {"success": True, "status": "rejected", "sku_id": log.sku_id}
