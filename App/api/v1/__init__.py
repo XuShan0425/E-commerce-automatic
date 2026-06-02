@@ -18,6 +18,7 @@ from App.api.v1.rate_parsing import router as rate_parsing_router
 from App.api.v1.scheduler_api import router as scheduler_router
 from App.api.v1.store_products import router as store_products_router
 from App.api.v1.system import router as system_router
+from App.api.v1.webhooks import router as webhooks_router
 
 router = APIRouter()
 router.include_router(health_router, tags=["health"])
@@ -25,6 +26,7 @@ router.include_router(api_key_router, tags=["auth"])
 router.include_router(user_router, tags=["auth"])
 router.include_router(auth_flow_router, tags=["auth"])
 router.include_router(alerts_router, tags=["alerts"])
+router.include_router(webhooks_router, tags=["webhooks"])
 router.include_router(backup_router, tags=["backups"])
 router.include_router(collect_router, tags=["collection"])
 router.include_router(scheduler_router, tags=["scheduler"])
