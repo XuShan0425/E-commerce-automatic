@@ -9,11 +9,12 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from App.core.database import async_session_factory
 from App.core.logging import get_logger
 from App.models.base import PriceSnapshot, Product
-from App.core.database import async_session_factory
 from App.services.boundary_checker import check_boundaries
 from App.services.decision_engine import generate_decision
+from App.services.feedback_service import get_decision_history
 from App.services.profit_calculator import (
     _get_ad_snapshots_7d,
     _get_platform_fee_rate,
@@ -94,6 +95,10 @@ async def analyze_single_sku(
     result["snapshots_7d"] = snapshots_7d  # 传递给执行层用于生成关闭报告
     fee_rate = await _get_platform_fee_rate(db, product.category)
 
+    # ── 反馈闭环：查询决策历史 ────────────────
+    decision_history = await get_decision_history(db, sku_id)
+    result["decision_history"] = decision_history
+
     price_result = await db.execute(
         select(PriceSnapshot.current_price)
         .where(PriceSnapshot.sku_id == sku_id)
@@ -112,6 +117,7 @@ async def analyze_single_sku(
             platform_fee_rate=fee_rate,
             profit=profit,
             snapshots_7d=snapshots_7d,
+            decision_history=decision_history,
         )
         result["decision"] = decision
     except ValueError as exc:

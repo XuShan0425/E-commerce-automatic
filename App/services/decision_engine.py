@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
-
-from App.core.logging import get_logger
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from App.models.base import AdSnapshot, PriceSnapshot, ProfitAnalysis
+from App.core.logging import get_logger
+from App.models.base import AdSnapshot, ProfitAnalysis
 from App.services.ai_client import _call_claude
+from App.services.feedback_service import format_history_for_prompt
 
 logger = get_logger(__name__)
 
@@ -59,6 +59,14 @@ DECISION_SYSTEM_PROMPT = """\
   "confidence": 0.82,
   "risk_level": "low | medium | high"
 }
+
+## 反馈闭环
+
+以下"近期操作历史"部分包含该 SKU 过去 7 天的操作记录和 ROI 变化。
+请参考这些历史数据，避免重复做出无效决策：
+- 如果某个操作已执行但 ROI 未改善，请考虑换一种策略
+- 如果之前的操作有效果（ROI 提升），可以延续相同方向
+- 对于已尝试过且失败的策略，请勿重复建议
 """
 
 
@@ -71,8 +79,14 @@ def _build_input_json(
     profit: ProfitAnalysis,
     snapshots_7d: list[AdSnapshot],
     latest_price: float,
+    decision_history: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """构建 AI 分析输入 JSON（符合 CLAUDE.md 规范）。"""
+    """构建 AI 分析输入 JSON（符合 CLAUDE.md 规范）。
+
+    Args:
+        decision_history: 可选，get_decision_history() 返回的决策历史，
+                          用于反馈闭环
+    """
     # 汇总 7 天广告数据摘要
     total_impressions = sum(s.impressions for s in snapshots_7d)
     total_clicks = sum(s.clicks for s in snapshots_7d)
@@ -114,6 +128,7 @@ def _build_input_json(
             "max_price_change_pct": 0.05,
             "price_change_cooldown_hours": 24,
         },
+        "decision_history": decision_history,
     }
 
 
@@ -168,6 +183,7 @@ async def generate_decision(
     platform_fee_rate: float,
     profit: ProfitAnalysis,
     snapshots_7d: list[AdSnapshot],
+    decision_history: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """生成单个 SKU 的广告决策。
 
@@ -180,6 +196,7 @@ async def generate_decision(
         platform_fee_rate: 平台佣金费率
         profit: 已计算的 ProfitAnalysis 记录
         snapshots_7d: 近 7 天广告快照
+        decision_history: 可选，反馈闭环的历史决策数据
 
     Returns:
          决策 dict，包含 decision_type / action / reasoning / confidence / risk_level
@@ -188,9 +205,16 @@ async def generate_decision(
     input_data = _build_input_json(
         sku_id, cost_price, current_price, logistics_cost,
         platform_fee_rate, profit, snapshots_7d, current_price,
+        decision_history=decision_history,
     )
 
     prompt = json.dumps(input_data, ensure_ascii=False, indent=2)
+
+    # 如果存在决策历史，追加格式化文本
+    if decision_history:
+        history_text = format_history_for_prompt(decision_history)
+        if history_text:
+            prompt += "\n\n" + history_text
 
     logger.info("正在为 SKU '%s' 生成广告决策...", sku_id)
     raw_response = await _call_claude(
@@ -202,7 +226,7 @@ async def generate_decision(
     )
 
     decision = _parse_decision_response(raw_response)
-    decision["_generated_at"] = datetime.now(timezone.utc).isoformat()
+    decision["_generated_at"] = datetime.now(UTC).isoformat()
     decision["_sku_id"] = sku_id
 
     logger.info(
