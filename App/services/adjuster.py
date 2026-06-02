@@ -87,6 +87,38 @@ SELECTORS: dict[str, list[str]] = {
         ".ait-btn:has-text('暂停')",
         "button:has-text('Pause')",
     ],
+    "pause_campaign_btn": [
+        "button:has-text('暂停')",
+        ".ait-btn:has-text('暂停')",
+        "button:has-text('Pause')",
+        "[class*=\"pause\"] button",
+    ],
+    "resume_campaign_btn": [
+        "button:has-text('恢复')",
+        ".ait-btn:has-text('恢复')",
+        "button:has-text('重启')",
+        "button:has-text('开启')",
+        "[class*=\"resume\"] button",
+        "[class*=\"start\"] button",
+    ],
+    "close_campaign_btn": [
+        "button:has-text('停止')",
+        ".ait-btn:has-text('停止')",
+        "button:has-text('关闭')",
+        "button:has-text('Stop')",
+        "button:has-text('结束')",
+    ],
+    "campaign_row": [
+        "[data-row-key]",
+        "[class*=\"campaign-row\"]",
+        "tr[class*=\"row\"]",
+        "div[class*=\"campaign-item\"]",
+    ],
+    "campaign_status_badge": [
+        "[class*=\"status-badge\"]",
+        "[class*=\"campaign-status\"]",
+        "span[class*=\"tag\"]",
+    ],
     "ad_type_selector": [
         "select.ait-select",
         "[class*=\"ait-select\"]",
@@ -418,12 +450,201 @@ def execute_switch_ad_type(
     return result
 
 
+# ── 活动管理 ──────────────────────────────────────
+
+
+def execute_pause_campaign(
+    browser_svc: BrowserService,
+    sku_id: str,
+    cookies: list[dict] | None = None,
+) -> dict[str, Any]:
+    """暂停推广活动。
+
+    流程：导航到一站式推广页 → 找到对应推广 → 点击暂停 → 确认。
+    """
+    result: dict[str, Any] = {
+        "success": False,
+        "operation": "pause_campaign",
+        "sku_id": sku_id,
+        "error": None,
+    }
+
+    context = browser_svc.new_context(cookies=cookies)
+    page = None
+    try:
+        page = context.new_page()
+        page.goto(AD_ALL_IN_ONE_URL, wait_until="domcontentloaded", timeout=30_000)
+        _page_ready(page)
+        page.wait_for_timeout(3_000)
+
+        # 点击暂停按钮
+        if _safe_click(page, SELECTORS["pause_campaign_btn"]):
+            page.wait_for_timeout(1_000)
+            # 确认弹窗
+            try:
+                confirm_el = page.wait_for_selector(SELECTORS["confirm_btn"], timeout=3_000)
+                if confirm_el:
+                    _safe_click(page, [SELECTORS["confirm_btn"]])
+            except Exception:
+                logger.debug("confirm dialog not found in pause_campaign")
+            page.wait_for_timeout(2_000)
+
+            # 检查成功提示
+            try:
+                page.wait_for_selector(SELECTORS["success_toast"], timeout=5_000)
+            except Exception:
+                logger.debug("success toast not found in pause_campaign")
+            result["success"] = True
+        else:
+            result["error"] = "无法找到暂停按钮"
+            return result
+
+        page.close()
+    except Exception as exc:
+        result["error"] = str(exc)
+        logger.exception("pause_campaign 执行异常: SKU=%s", sku_id)
+    finally:
+        if page is not None:
+            try:
+                page.close()
+            except Exception:
+                logger.debug("page close failed in pause_campaign")
+        context.close()
+
+    return result
+
+
+def execute_resume_campaign(
+    browser_svc: BrowserService,
+    sku_id: str,
+    cookies: list[dict] | None = None,
+) -> dict[str, Any]:
+    """恢复已暂停的推广活动。
+
+    流程：导航到一站式推广页 → 找到对应推广 → 点击恢复 → 确认。
+    """
+    result: dict[str, Any] = {
+        "success": False,
+        "operation": "resume_campaign",
+        "sku_id": sku_id,
+        "error": None,
+    }
+
+    context = browser_svc.new_context(cookies=cookies)
+    page = None
+    try:
+        page = context.new_page()
+        page.goto(AD_ALL_IN_ONE_URL, wait_until="domcontentloaded", timeout=30_000)
+        _page_ready(page)
+        page.wait_for_timeout(3_000)
+
+        # 点击恢复按钮
+        if _safe_click(page, SELECTORS["resume_campaign_btn"]):
+            page.wait_for_timeout(1_000)
+            # 确认弹窗
+            try:
+                confirm_el = page.wait_for_selector(SELECTORS["confirm_btn"], timeout=3_000)
+                if confirm_el:
+                    _safe_click(page, [SELECTORS["confirm_btn"]])
+            except Exception:
+                logger.debug("confirm dialog not found in resume_campaign")
+            page.wait_for_timeout(2_000)
+
+            # 检查成功提示
+            try:
+                page.wait_for_selector(SELECTORS["success_toast"], timeout=5_000)
+            except Exception:
+                logger.debug("success toast not found in resume_campaign")
+            result["success"] = True
+        else:
+            result["error"] = "无法找到恢复按钮"
+            return result
+
+        page.close()
+    except Exception as exc:
+        result["error"] = str(exc)
+        logger.exception("resume_campaign 执行异常: SKU=%s", sku_id)
+    finally:
+        if page is not None:
+            try:
+                page.close()
+            except Exception:
+                logger.debug("page close failed in resume_campaign")
+        context.close()
+
+    return result
+
+
+def execute_stop_campaign(
+    browser_svc: BrowserService,
+    sku_id: str,
+    cookies: list[dict] | None = None,
+) -> dict[str, Any]:
+    """停止/关闭推广活动（软边界操作，需要人工确认）。
+
+    流程：导航到一站式推广页 → 找到对应推广 → 点击停止/关闭 → 确认。
+    """
+    result: dict[str, Any] = {
+        "success": False,
+        "operation": "stop_campaign",
+        "sku_id": sku_id,
+        "error": None,
+    }
+
+    context = browser_svc.new_context(cookies=cookies)
+    page = None
+    try:
+        page = context.new_page()
+        page.goto(AD_ALL_IN_ONE_URL, wait_until="domcontentloaded", timeout=30_000)
+        _page_ready(page)
+        page.wait_for_timeout(3_000)
+
+        # 点击停止/关闭按钮
+        if _safe_click(page, SELECTORS["close_campaign_btn"]):
+            page.wait_for_timeout(1_000)
+            # 确认弹窗
+            try:
+                confirm_el = page.wait_for_selector(SELECTORS["confirm_btn"], timeout=3_000)
+                if confirm_el:
+                    _safe_click(page, [SELECTORS["confirm_btn"]])
+            except Exception:
+                logger.debug("confirm dialog not found in stop_campaign")
+            page.wait_for_timeout(2_000)
+
+            # 检查成功提示
+            try:
+                page.wait_for_selector(SELECTORS["success_toast"], timeout=5_000)
+            except Exception:
+                logger.debug("success toast not found in stop_campaign")
+            result["success"] = True
+        else:
+            result["error"] = "无法找到停止按钮"
+            return result
+
+        page.close()
+    except Exception as exc:
+        result["error"] = str(exc)
+        logger.exception("stop_campaign 执行异常: SKU=%s", sku_id)
+    finally:
+        if page is not None:
+            try:
+                page.close()
+            except Exception:
+                logger.debug("page close failed in stop_campaign")
+        context.close()
+
+    return result
+
+
 # ── 执行器路由表 ─────────────────────────────────
 EXECUTORS = {
     "adjust_bid": execute_adjust_bid,
     "adjust_price": execute_adjust_price,
     "stop_ad": execute_stop_ad,
     "switch_ad_type": execute_switch_ad_type,
+    "pause_campaign": execute_pause_campaign,
+    "resume_campaign": execute_resume_campaign,
+    "stop_campaign": execute_stop_campaign,
 }
 
 

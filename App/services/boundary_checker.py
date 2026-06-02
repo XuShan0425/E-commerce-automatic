@@ -754,7 +754,7 @@ async def check_boundaries(
 
     # ── 软边界 1: 关闭推广活动需要人工确认 ─────────
     decision_type = decision.get("decision_type", "")
-    if decision_type == "stop_ad":
+    if decision_type in ("stop_ad", "stop_campaign"):
         reasons.append("决定关闭推广活动，需要人工确认")
         logger.info(
             "软边界拦截: SKU=%s stop_ad 待确认",
@@ -765,7 +765,7 @@ async def check_boundaries(
             passed=False,
             boundary_type="soft",
             reason="; ".join(reasons),
-            details={"decision_type": "stop_ad"},
+            details={"decision_type": decision_type},
         )
 
     # ── 软边界 2: requires_confirmation ──────────
