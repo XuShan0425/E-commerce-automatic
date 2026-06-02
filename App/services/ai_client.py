@@ -133,7 +133,6 @@ async def _call_claude(
             _proxy_cfg["https://"] = _https_proxy
         if _proxy_cfg:
             _proxy = _proxy_cfg
-        )
         async with httpx.AsyncClient(timeout=timeout, proxies=_proxy) as client:
             # 用 asyncio.wait_for 套一层硬截止
             response = await asyncio.wait_for(

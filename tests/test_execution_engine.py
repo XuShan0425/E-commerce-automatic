@@ -126,7 +126,7 @@ async def test_crash_during_execution_sets_global_stop(mock_db, sample_analysis_
     # then mock run_executor to raise the crash exception.
     # Also mock logger.exception to avoid StructuredLogger signature issue.
     fake_cookie_mgr = mock.AsyncMock()
-    fake_cookie_mgr.load_cookies.return_value = []
+    fake_cookie_mgr.load_cookies.return_value = [{"name": "test_cookie", "value": "test_value"}]
 
     with (
         mock.patch(

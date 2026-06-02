@@ -12,30 +12,37 @@ import pytest
 from App.services.boundary_checker import BoundaryResult, check_boundaries
 
 
+def _make_config_result() -> mock.MagicMock:
+    """创建返回 None 的 mock 结果（_get_boundary_config 默认值）。"""
+    r = mock.MagicMock()
+    r.scalar_one_or_none.return_value = None
+    return r
+
+
+def _make_cookie_result(is_valid: bool = True) -> mock.MagicMock:
+    """创建 cookie 查询结果 mock。"""
+    r = mock.MagicMock()
+    r.scalar_one_or_none.return_value = mock.MagicMock(is_valid=is_valid)
+    return r
+
+
 class TestCheckBoundaries:
     """测试 check_boundaries 函数。"""
 
     @pytest.mark.asyncio
     async def test_passed(self, mock_db, sample_profit_analysis):
         """验证当决策正常时，边界检查通过。"""
-        # mock cookie：返回有效的 cookie
-        mock_cookie_result = mock.MagicMock()
-        mock_cookie_result.scalar_one_or_none.return_value = mock.MagicMock(is_valid=True)
-
-        # mock global stop：返回 False
+        mock_config_result = _make_config_result()
+        mock_cookie_result = _make_cookie_result()
         mock_global_stop_result = mock.MagicMock()
         mock_global_stop_result.scalar_one_or_none.return_value = None
 
         async def execute_side_effect(stmt):
-            if "FROM cookie_store" in str(stmt) or "FROM cookie_store" in str(stmt).lower():
+            if "cookie_store" in str(stmt).lower():
                 return mock_cookie_result
-            # 对于 global_stop 的检查
-            mock_all_result = mock.MagicMock()
-            mock_all_result.scalar_one_or_none.return_value = None
-            return mock_all_result
+            return mock_config_result
 
         mock_db.execute = mock.AsyncMock(side_effect=execute_side_effect)
-        # 需要让 is_global_stop_active 返回 False
         with mock.patch(
             "App.services.boundary_checker.is_global_stop_active",
             return_value=False,
@@ -56,7 +63,21 @@ class TestCheckBoundaries:
         """验证 ROI 连续 7 天为负时触发硬边界。"""
         decision = {"decision_type": "no_action", "confidence": 0.5, "risk_level": "low"}
 
-        result = await check_boundaries(mock_db, "bad_sku", decision, negative_roi_analysis)
+        mock_config_result = _make_config_result()
+        mock_cookie_result = _make_cookie_result()
+
+        async def execute_side_effect(stmt):
+            if "cookie_store" in str(stmt).lower():
+                return mock_cookie_result
+            return mock_config_result
+
+        mock_db.execute = mock.AsyncMock(side_effect=execute_side_effect)
+
+        with mock.patch(
+            "App.services.boundary_checker.is_global_stop_active",
+            return_value=False,
+        ):
+            result = await check_boundaries(mock_db, "bad_sku", decision, negative_roi_analysis)
 
         assert result.passed is False
         assert result.boundary_type == "hard"
@@ -65,10 +86,15 @@ class TestCheckBoundaries:
     @pytest.mark.asyncio
     async def test_hard_boundary_budget_exceeded(self, mock_db, sample_profit_analysis):
         """验证日广告花费超出上限时触发硬边界。"""
-        # mock cookie 有效
-        mock_cookie_result = mock.MagicMock()
-        mock_cookie_result.scalar_one_or_none.return_value = mock.MagicMock(is_valid=True)
-        mock_db.execute.return_value = mock_cookie_result
+        mock_config_result = _make_config_result()
+        mock_cookie_result = _make_cookie_result()
+
+        async def execute_side_effect(stmt):
+            if "cookie_store" in str(stmt).lower():
+                return mock_cookie_result
+            return mock_config_result
+
+        mock_db.execute = mock.AsyncMock(side_effect=execute_side_effect)
 
         with mock.patch(
             "App.services.boundary_checker.is_global_stop_active",
@@ -97,9 +123,15 @@ class TestCheckBoundaries:
     @pytest.mark.asyncio
     async def test_hard_boundary_price_change_exceeded(self, mock_db, sample_profit_analysis):
         """验证调价幅度超过 5% 时触发硬边界。"""
-        mock_cookie_result = mock.MagicMock()
-        mock_cookie_result.scalar_one_or_none.return_value = mock.MagicMock(is_valid=True)
-        mock_db.execute.return_value = mock_cookie_result
+        mock_config_result = _make_config_result()
+        mock_cookie_result = _make_cookie_result()
+
+        async def execute_side_effect(stmt):
+            if "cookie_store" in str(stmt).lower():
+                return mock_cookie_result
+            return mock_config_result
+
+        mock_db.execute = mock.AsyncMock(side_effect=execute_side_effect)
 
         with mock.patch(
             "App.services.boundary_checker.is_global_stop_active",
@@ -128,9 +160,15 @@ class TestCheckBoundaries:
     @pytest.mark.asyncio
     async def test_soft_boundary_stop_ad(self, mock_db, sample_profit_analysis):
         """验证关闭推广活动触发软边界。"""
-        mock_cookie_result = mock.MagicMock()
-        mock_cookie_result.scalar_one_or_none.return_value = mock.MagicMock(is_valid=True)
-        mock_db.execute.return_value = mock_cookie_result
+        mock_config_result = _make_config_result()
+        mock_cookie_result = _make_cookie_result()
+
+        async def execute_side_effect(stmt):
+            if "cookie_store" in str(stmt).lower():
+                return mock_cookie_result
+            return mock_config_result
+
+        mock_db.execute = mock.AsyncMock(side_effect=execute_side_effect)
 
         with mock.patch(
             "App.services.boundary_checker.is_global_stop_active",
@@ -151,9 +189,15 @@ class TestCheckBoundaries:
     @pytest.mark.asyncio
     async def test_soft_boundary_requires_confirmation(self, mock_db, sample_profit_analysis):
         """验证 requires_confirmation 触发软边界。"""
-        mock_cookie_result = mock.MagicMock()
-        mock_cookie_result.scalar_one_or_none.return_value = mock.MagicMock(is_valid=True)
-        mock_db.execute.return_value = mock_cookie_result
+        mock_config_result = _make_config_result()
+        mock_cookie_result = _make_cookie_result()
+
+        async def execute_side_effect(stmt):
+            if "cookie_store" in str(stmt).lower():
+                return mock_cookie_result
+            return mock_config_result
+
+        mock_db.execute = mock.AsyncMock(side_effect=execute_side_effect)
 
         with mock.patch(
             "App.services.boundary_checker.is_global_stop_active",
@@ -176,9 +220,16 @@ class TestCheckBoundaries:
     @pytest.mark.asyncio
     async def test_hard_boundary_cookie_missing(self, mock_db, sample_profit_analysis):
         """验证 Cookie 不存在时触发硬边界。"""
-        mock_cookie_result = mock.MagicMock()
+        mock_config_result = _make_config_result()
+        mock_cookie_result = _make_cookie_result(is_valid=False)
         mock_cookie_result.scalar_one_or_none.return_value = None
-        mock_db.execute.return_value = mock_cookie_result
+
+        async def execute_side_effect(stmt):
+            if "cookie_store" in str(stmt).lower():
+                return mock_cookie_result
+            return mock_config_result
+
+        mock_db.execute = mock.AsyncMock(side_effect=execute_side_effect)
 
         decision = {"decision_type": "adjust_bid", "confidence": 0.5, "risk_level": "low"}
 

@@ -314,7 +314,10 @@ async def test_ai_decision_value_error_fallback(mock_db):
             new=mock.AsyncMock(side_effect=ValueError("LLM_API_KEY not configured")),
         ),
     ):
-        mock_db.execute.return_value.scalar_one_or_none = mock.MagicMock(return_value=12.0)
+        mock_execute_result = mock.MagicMock()
+        mock_execute_result.scalar_one_or_none.return_value = 12.0
+        mock_execute_result.all.return_value = []
+        mock_db.execute.return_value = mock_execute_result
         result = await analyze_single_sku(mock_db, "test_sku")
 
     assert result["success"] is True
@@ -355,7 +358,10 @@ async def test_ai_decision_generic_exception_fallback(mock_db):
             new=mock.AsyncMock(side_effect=RuntimeError("API timeout")),
         ),
     ):
-        mock_db.execute.return_value.scalar_one_or_none = mock.MagicMock(return_value=12.0)
+        mock_execute_result = mock.MagicMock()
+        mock_execute_result.scalar_one_or_none.return_value = 12.0
+        mock_execute_result.all.return_value = []
+        mock_db.execute.return_value = mock_execute_result
         result = await analyze_single_sku(mock_db, "test_sku")
 
     assert result["success"] is True
