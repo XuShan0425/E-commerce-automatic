@@ -6,18 +6,17 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
-    AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
 
+from App.core.config import settings
 from App.core.database import Base
 from App.models.base import (
     AdSnapshot,
@@ -29,10 +28,14 @@ from App.models.base import (
 )
 from App.services.analysis_pipeline import analyze_all_skus
 
-# Dedicated test database (created externally).
+# Dedicated test database — credentials read from settings / .env.
+_TEST_DB_USER = settings.DB_USER
+_TEST_DB_PASSWORD = settings.DB_PASSWORD
+_TEST_DB_HOST = settings.DB_HOST
+_TEST_DB_PORT = settings.DB_PORT
 _TEST_DB_URL = (
-    "postgresql+asyncpg://ad_manager:change-me-in-production"
-    "@localhost:5432/ad_manager_test"
+    f"postgresql+asyncpg://{_TEST_DB_USER}:{_TEST_DB_PASSWORD}"
+    f"@{_TEST_DB_HOST}:{_TEST_DB_PORT}/ad_manager_test"
 )
 
 
@@ -60,7 +63,7 @@ _FEE_ROWS = [
     {"category": "Accessories", "fee_rate": 0.08},
 ]
 
-_NOW = datetime.now(timezone.utc)
+_NOW = datetime.now(UTC)
 _T1 = _NOW - timedelta(hours=3)
 _T2 = _NOW - timedelta(days=1)
 
