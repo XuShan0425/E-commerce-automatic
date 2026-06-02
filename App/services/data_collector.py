@@ -26,6 +26,8 @@ from App.models.system_state import is_global_stop_active
 
 from App.services.api_interceptor import AdDataInterceptor, CollectedAdData, CollectedPriceData
 from App.core.errors import ErrorCode, error_response
+from App.models.base import AdSnapshot, PriceSnapshot, Product
+from App.models.system_state import is_global_stop_active
 
 if TYPE_CHECKING:
     from App.services.browser import BrowserService
@@ -383,6 +385,8 @@ async def upsert_products_from_export(
     Returns:
         {"success": bool, "upserted": int, "products": list, "errors": list, ...}
     """
+    import asyncio
+
     from App.services.product_scraper import scrape_products_via_export
 
     # ── 前置检查：Cookie ──────────────────────────

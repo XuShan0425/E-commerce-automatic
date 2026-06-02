@@ -40,6 +40,10 @@ services:
       - "${APP_PORT:-8000}:8000"
     env_file:
       - .env
+    environment:
+      - DB_HOST=postgres
+      - REDIS_HOST=redis
+      - REDIS_URL=redis://redis:6379/0
     depends_on:
       postgres:
         condition: service_healthy

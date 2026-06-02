@@ -238,8 +238,7 @@ async def compute_profit(db: AsyncSession, sku_id: str) -> ProfitAnalysis:
     await db.refresh(analysis)
 
     logger.info(
-        "利润计算完成: SKU=%s price=%.2f cost=%.2f margin=%.2f%% roi=%.2f",
-        sku_id, current_price, true_cost, gross_margin * 100, current_roi,
+        f"利润计算完成: SKU={sku_id} price={current_price:.2f} cost={true_cost:.2f} margin={gross_margin * 100:.2f}% roi={current_roi:.2f}"
     )
 
     return analysis

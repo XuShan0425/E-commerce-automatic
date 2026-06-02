@@ -842,6 +842,11 @@ def _extract_from_inner_text(page) -> list[dict]:
 # 替代策略：通过 CSP 商品管理页面的导出功能下载 CSV/XLSX，
 # 替代三重 DOM 抓取策略。跟随 SYCM 已验证的导出范式。
 
+import csv
+import os
+import tempfile
+from typing import Any
+
 _EXPORT_BUTTON_TEXTS = ["导出", "下载", "导出报表", "Export", "Download", "产品导出"]
 _EXPORT_FILE_EXTENSIONS = {".csv", ".xlsx", ".xls"}
 _EXPORT_TIMEOUT_SEC = 60
