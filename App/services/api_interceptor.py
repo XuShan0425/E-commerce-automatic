@@ -146,6 +146,67 @@ _COMPETITOR_FIELD_PATTERNS: dict[str, list[str]] = {
     ],
 }
 
+# ── 联盟广告数据识别模式 ─────────────────────────
+_AFFILIATE_FIELD_PATTERNS: dict[str, list[str]] = {
+    "commission_rate": [
+        "commissionRate",
+        "commission_rate",
+        "commission",
+        "commRate",
+        "affiliateCommissionRate",
+        "affCommissionRate",
+        "佣金率",
+    ],
+    "commission_amount": [
+        "commissionAmount",
+        "commission_amount",
+        "commAmount",
+        "affiliateCommission",
+        "affCommission",
+        "佣金金额",
+    ],
+    "affiliate_clicks": [
+        "affiliateClicks",
+        "affClicks",
+        "affiliate_clicks",
+        "promotionClicks",
+        "联盟点击",
+    ],
+    "affiliate_orders": [
+        "affiliateOrders",
+        "affOrders",
+        "affiliate_orders",
+        "promotionOrders",
+        "联盟订单",
+    ],
+    "affiliate_revenue": [
+        "affiliateRevenue",
+        "affRevenue",
+        "affiliate_revenue",
+        "promotionRevenue",
+        "联盟收入",
+    ],
+    "affiliate_conversion": [
+        "affiliateConversionRate",
+        "affCvr",
+        "affiliate_cvr",
+        "promotionCvr",
+        "联盟转化率",
+    ],
+    "product_name": [
+        "productName",
+        "product_name",
+        "product",
+        "itemName",
+        "item_name",
+        "offerName",
+        "offer_name",
+        "title",
+        "subject",
+    ],
+}
+
+
 # ── 竞品相关 API URL 特征 ───────────────────────
 # 推荐算法 API、商品推荐、also-bought、related products
 _COMPETITOR_URL_PATTERNS = [
@@ -166,8 +227,25 @@ _COMPETITOR_URL_PATTERNS = [
 ]
 
 
+# ── 联盟相关 API URL 特征 ───────────────────────
+_AFFILIATE_URL_PATTERNS = [
+    r"seller-acs\.aliexpress\.com/h5/mtop.*affiliate",
+    r"affiliate\.aliexpress",
+    r"/affiliate/",
+    r"commissionRate",
+    r"affiliateCommission",
+    r"affiliateSummary",
+    r"affiliateReport",
+    r"traffic.*affiliate",
+]
+
+
 def _is_competitor_api(url: str) -> bool:
     return any(re.search(pattern, url, re.IGNORECASE) for pattern in _COMPETITOR_URL_PATTERNS)
+
+
+def _is_affiliate_api(url: str) -> bool:
+    return any(re.search(pattern, url, re.IGNORECASE) for pattern in _AFFILIATE_URL_PATTERNS)
 
 
 def _find_competitor_items(body: Any, source_sku_id: str = "") -> list[dict]:
@@ -202,6 +280,63 @@ def _find_competitor_items(body: Any, source_sku_id: str = "") -> list[dict]:
                                 }
                                 # 只保留有 SKU ID 的条目，且过滤掉自身
                                 if extracted["sku_id"] and extracted["sku_id"] != source_sku_id:
+                                    results.append(extracted)
+                elif isinstance(value, (dict, list)):
+                    _search(value)
+        elif isinstance(obj, list):
+            for item in obj:
+                _search(item)
+
+    _search(body)
+    return results
+
+
+def _find_affiliate_items(body: Any, source_sku_id: str = "") -> list[dict]:
+    """在 JSON 响应中查找联盟推广条目列表。
+
+    查找策略:
+      1. 查找包含 commission_rate / affiliate_clicks 等联盟字段的数组
+      2. 数组元素需包含 sku_id / product_name / commission 等字段
+    """
+    results: list[dict] = []
+
+    def _search(obj: Any) -> None:
+        """递归搜索 JSON 结构中的联盟推广条目列表。"""
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                if isinstance(value, list) and len(value) > 0:
+                    if all(isinstance(item, dict) for item in value):
+                        sample = value[0]
+                        # 检查是否含有联盟相关字段
+                        aff_keys = (
+                            _AFFILIATE_FIELD_PATTERNS["commission_rate"]
+                            + _AFFILIATE_FIELD_PATTERNS["affiliate_clicks"]
+                            + _AFFILIATE_FIELD_PATTERNS["affiliate_orders"]
+                        )
+                        if _has_any_key(sample, aff_keys):
+                            for item in value:
+                                fv = _find_value
+                                fp = _AFFILIATE_FIELD_PATTERNS
+                                cp = _COMPETITOR_FIELD_PATTERNS
+                                extracted = {
+                                    "sku_id": str(
+                                        fv(item, fp.get("sku_id", []))
+                                        or fv(item, cp.get("sku_id", []))
+                                        or ""
+                                    ),
+                                    "product_name": str(fv(item, fp["product_name"]) or ""),
+                                    "commission_rate": _safe_float(fv(item, fp["commission_rate"])),
+                                    "commission_amount": _safe_float(
+                                        fv(item, fp["commission_amount"])
+                                    ),
+                                    "clicks": _safe_int(fv(item, fp["affiliate_clicks"])),
+                                    "orders": _safe_int(fv(item, fp["affiliate_orders"])),
+                                    "revenue": _safe_float(fv(item, fp["affiliate_revenue"])),
+                                    "conversion_rate": _safe_float(
+                                        fv(item, fp["affiliate_conversion"])
+                                    ),
+                                }
+                                if extracted["sku_id"] or extracted["product_name"]:
                                     results.append(extracted)
                 elif isinstance(value, (dict, list)):
                     _search(value)
@@ -367,10 +502,27 @@ class CollectedCompetitorData:
 
 
 @dataclass
+class CollectedAffiliateData:
+    """从联盟营销 API 中提取的推广数据条目。"""
+
+    sku_id: str = ""
+    product_name: str = ""
+    commission_rate: float = 0.0
+    commission_amount: float = 0.0
+    clicks: int = 0
+    orders: int = 0
+    revenue: float = 0.0
+    conversion_rate: float = 0.0
+    source_url: str = ""
+    raw_data: dict | None = None
+
+
+@dataclass
 class InterceptResult:
     ad_data: list[CollectedAdData] = field(default_factory=list)
     price_data: list[CollectedPriceData] = field(default_factory=list)
     competitor_data: list[CollectedCompetitorData] = field(default_factory=list)
+    affiliate_data: list[CollectedAffiliateData] = field(default_factory=list)
     total_responses: int = 0
     ad_api_responses: int = 0
 
@@ -394,7 +546,7 @@ class AdDataInterceptor:
 
         url = response.url
         # 只处理 API 请求
-        if not _is_ad_api(url) and not _is_competitor_api(url):
+        if not _is_ad_api(url) and not _is_competitor_api(url) and not _is_affiliate_api(url):
             return
 
         self.result.ad_api_responses += 1
@@ -410,6 +562,7 @@ class AdDataInterceptor:
         self._extract_ad_data(url, body)
         self._extract_price_data(url, body)
         self._extract_competitor_data(url, body)
+        self._extract_affiliate_data(url, body)
 
     def _extract_ad_data(self, url: str, body: Any) -> None:
         candidates = _find_all_dicts(body, _AD_FIELD_PATTERNS)
@@ -452,6 +605,26 @@ class AdDataInterceptor:
             )
             if comp.sku_id:
                 self.result.competitor_data.append(comp)
+
+    def _extract_affiliate_data(self, url: str, body: Any) -> None:
+        """从联盟营销 API 响应中提取推广数据。"""
+        if not _is_affiliate_api(url):
+            return
+        items = _find_affiliate_items(body)
+        for item in items:
+            aff = CollectedAffiliateData(
+                source_url=url,
+                sku_id=item.get("sku_id", ""),
+                product_name=item.get("product_name", ""),
+                commission_rate=item.get("commission_rate", 0.0),
+                commission_amount=item.get("commission_amount", 0.0),
+                clicks=item.get("clicks", 0),
+                orders=item.get("orders", 0),
+                revenue=item.get("revenue", 0.0),
+                conversion_rate=item.get("conversion_rate", 0.0),
+            )
+            if aff.sku_id or aff.product_name:
+                self.result.affiliate_data.append(aff)
 
     def _extract_price_data(self, url: str, body: Any) -> None:
         candidates = _find_all_dicts(body, _PRICE_FIELD_PATTERNS)

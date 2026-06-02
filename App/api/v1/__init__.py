@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter
 
+from App.api.v1.affiliate import router as affiliate_router
 from App.api.v1.alerts import router as alerts_router
 from App.api.v1.analysis import router as analysis_router
 from App.api.v1.auth import api_key_router, user_router
@@ -37,3 +38,4 @@ router.include_router(rate_parsing_router, tags=["rates"])
 router.include_router(analysis_router, tags=["analysis"])
 router.include_router(execution_router, tags=["execution"])
 router.include_router(competitors_router, tags=["competitors"])
+router.include_router(affiliate_router, tags=["affiliate"])

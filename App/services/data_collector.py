@@ -27,6 +27,7 @@ from App.models.system_state import is_global_stop_active
 from App.services.api_interceptor import (
     AdDataInterceptor,
     CollectedAdData,
+    CollectedAffiliateData,
     CollectedCompetitorData,
     CollectedPriceData,
 )
@@ -115,9 +116,11 @@ def _run_csp_export_sync(
         result["ad_data"] = interceptor.result.ad_data
         result["price_data"] = interceptor.result.price_data
         result["competitor_data"] = interceptor.result.competitor_data
+        result["affiliate_data"] = interceptor.result.affiliate_data
         result["ad_count"] = len(interceptor.result.ad_data)
         result["price_count"] = len(interceptor.result.price_data)
         result["competitor_count"] = len(interceptor.result.competitor_data)
+        result["affiliate_count"] = len(interceptor.result.affiliate_data)
         result["total_responses"] = interceptor.result.total_responses
         result["ad_api_responses"] = interceptor.result.ad_api_responses
         result["success"] = True
