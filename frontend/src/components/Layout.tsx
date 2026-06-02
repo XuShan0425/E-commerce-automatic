@@ -7,6 +7,7 @@ const NAV = [
   { to: '/rates-settings', label: '费率设置', icon: '💰' },
   { to: '/logs', label: '日志中心', icon: '📋' },
   { to: '/alerts', label: '警报中心', icon: '🔔' },
+  { to: '/backups', label: '备份管理', icon: '💾' },
   { to: '/reports', label: '报告查看', icon: '📈' },
   { to: '/settings', label: '系统设置', icon: '⚙️' },
 ];
