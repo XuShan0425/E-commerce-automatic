@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from typing import Any
-
-from App.core.logging import get_logger
 
 import httpx
 
 from App.core.config import settings
+from App.core.logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -121,7 +121,20 @@ async def _call_claude(
             write=30.0,
             pool=10.0,
         )
-        async with httpx.AsyncClient(timeout=timeout) as client:
+
+        # 从环境变量读取代理配置（Docker 部署时由 docker-compose 传入）
+        _proxy: dict[str, str] | str | None = None
+        _http_proxy = os.environ.get("HTTP_PROXY", "").strip()
+        _https_proxy = os.environ.get("HTTPS_PROXY", "").strip()
+        _proxy_cfg: dict[str, str] = {}
+        if _http_proxy:
+            _proxy_cfg["http://"] = _http_proxy
+        if _https_proxy:
+            _proxy_cfg["https://"] = _https_proxy
+        if _proxy_cfg:
+            _proxy = _proxy_cfg
+        )
+        async with httpx.AsyncClient(timeout=timeout, proxies=_proxy) as client:
             # 用 asyncio.wait_for 套一层硬截止
             response = await asyncio.wait_for(
                 client.post(
@@ -201,7 +214,10 @@ async def parse_html_to_json(
 """
 
     raw_response = await _call_claude(prompt, sku_id=sku_id)
-    logger.debug("Claude raw response (first 500 chars): %s", raw_response[:500])
+    logger.debug(
+        "Claude raw response (first 500 chars)",
+        extra={"response_preview": raw_response[:500]},
+    )
 
     # Claude 可能返回带 ```json ... ``` 包裹的 JSON，去掉包裹标记
     cleaned = raw_response.strip()
@@ -217,8 +233,8 @@ async def parse_html_to_json(
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError as exc:
-        logger.error("Failed to parse Claude response as JSON: %s", exc)
-        logger.debug("Raw response (full): %s", raw_response)
+        logger.error("Failed to parse Claude response as JSON", extra={"error": str(exc)})
+        logger.debug("Raw response (first 500 chars)", extra={"raw": raw_response[:500]})
         raise ValueError(
             f"AI 返回的内容无法解析为 JSON。原始响应: {raw_response[:500]}"
         ) from exc

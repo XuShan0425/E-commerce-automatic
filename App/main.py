@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from App.api.public import router as public_router
+from App.api.public.v1 import router as public_v1_router
 from App.api.v1 import router as v1_router
 from App.core.config import settings
 from App.core.database import async_session_factory, engine
@@ -44,6 +45,7 @@ public_app = FastAPI(
     version="0.1.0",
 )
 public_app.include_router(public_router)
+public_app.include_router(public_v1_router)
 
 app.mount("/api/public/v1", public_app)
 

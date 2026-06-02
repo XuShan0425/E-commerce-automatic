@@ -146,8 +146,8 @@ def _parse_decision_response(raw: str) -> dict[str, Any]:
     try:
         result = json.loads(cleaned)
     except json.JSONDecodeError as exc:
-        logger.error("决策 JSON 解析失败: %s", exc)
-        logger.debug("原始响应: %s", raw)
+        logger.error("决策 JSON 解析失败", extra={"error": str(exc)})
+        logger.debug("原始响应", extra={"raw": raw[:500]})
         # 返回一个安全的 fallback
         return {
             "decision_type": "no_action",
@@ -216,7 +216,7 @@ async def generate_decision(
         if history_text:
             prompt += "\n\n" + history_text
 
-    logger.info("正在为 SKU '%s' 生成广告决策...", sku_id)
+    logger.info("正在为 SKU 生成广告决策...", extra={"sku_id": sku_id})
     raw_response = await _call_claude(
         prompt,
         system_prompt=DECISION_SYSTEM_PROMPT,
@@ -230,9 +230,13 @@ async def generate_decision(
     decision["_sku_id"] = sku_id
 
     logger.info(
-        "决策完成: SKU=%s type=%s risk=%s confidence=%.2f",
-        sku_id, decision.get("decision_type"),
-        decision.get("risk_level"), decision.get("confidence", 0),
+        "决策完成",
+        extra={
+            "sku_id": sku_id,
+            "decision_type": decision.get("decision_type"),
+            "risk_level": decision.get("risk_level"),
+            "confidence": decision.get("confidence", 0),
+        },
     )
 
     return decision

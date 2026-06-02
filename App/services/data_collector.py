@@ -12,16 +12,19 @@
 
 from __future__ import annotations
 
-import logging
+import asyncio
+import json
 import time
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import Insert as PgInsert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from App.core.errors import ErrorCode, error_response
+from App.core.logging import get_logger
 from App.models.base import AdSnapshot, CompetitorSnapshot, PriceSnapshot
 from App.models.system_state import is_global_stop_active
 from App.services.api_interceptor import (
@@ -31,18 +34,19 @@ from App.services.api_interceptor import (
     CollectedCompetitorData,
     CollectedPriceData,
 )
+from App.services.stealth import random_delay, MOUSE_TRAJECTORY_JS
 
 if TYPE_CHECKING:
     from App.services.browser import BrowserService
     from App.services.cookie_manager import CookieManager
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
-# ── Feature flag ───────────────────────────────────
-# 设为 False 可一键回退到旧 API 拦截方案
-USE_CSP_EXPORT = True
 
-# ── 速卖通卖家中心页面 (旧 API 拦截回退用) ──────
+# ── 速卖通卖家中心页面 (2026-05-31 实测) ────────
+# ── 速卖通卖家中心页面 (2026-05-31 实测) ────────
+# 旧域名 gsp.aliexpress.com 已废弃，新架构统一用 csp.aliexpress.com
+# ad.aliexpress.com 需独立登录且返回空页面 — 改用 CSP 内部推广入口
 AD_PAGES = [
     "https://csp.aliexpress.com/",
     "https://csp.aliexpress.com/m_apps/p4p-pages/home?p4p_enter_from=sidebar",
@@ -54,8 +58,18 @@ CSP_EXPORT_TIMEOUT = 55       # 单次导出等待上限（秒）
 CSP_EXPORT_MAX_RETRIES = 1    # 失败重试次数
 
 
-def _run_csp_export_sync(
-    products: list[dict[str, Any]],
+
+def _navigate_and_wait(page, page_url: str, timeout: int) -> None:
+    """单个页面的导航 + 等待操作。被 with_retry 包裹。"""
+    page.goto(
+        page_url,
+        wait_until="domcontentloaded",
+        timeout=min(30_000, timeout * 1000),
+    )
+    page.wait_for_timeout(max(2_000, timeout * 50))
+
+
+def _run_collection_sync(
     cookies: list[dict],
     headless: bool = True,
     timeout: int = CSP_EXPORT_TIMEOUT,
@@ -97,18 +111,33 @@ def _run_csp_export_sync(
         interceptor = AdDataInterceptor()
         interceptor.attach(page)
 
+        # 注入鼠标轨迹模拟脚本
+        page.add_init_script(MOUSE_TRAJECTORY_JS)
+
+        retry_cfg = RetryConfig()
+
+        # 逐个访问广告相关页面，等待 API 响应
         for page_url in AD_PAGES:
             try:
-                page.goto(
-                    page_url,
-                    wait_until="domcontentloaded",
-                    timeout=min(30_000, timeout * 1000),
+                # 每个页面访问前增加随机延迟
+                random_delay(1.0, 3.0)
+
+                with_retry(
+                    lambda url=page_url: _navigate_and_wait(page, url, timeout),
+                    config=retry_cfg,
+                    context=f"page_goto:{page_url}",
                 )
-                page.wait_for_timeout(max(2_000, timeout * 50))
+
+                # 随机延迟后滚动
+                random_delay(0.5, 2.0)
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 page.wait_for_timeout(2_000)
+                # 在页面间增加随机延迟
+                random_delay(1.0, 3.0)
+            except NonRetryableError:
+                raise
             except Exception as exc:
-                result["errors"].append(f"页面 {page_url} 访问异常: {exc}")
+                result["errors"].append(f"页面 {page_url} 访问异常 (重试耗尽): {exc}")
 
         page.close()
         context.close()
@@ -125,6 +154,16 @@ def _run_csp_export_sync(
         result["ad_api_responses"] = interceptor.result.ad_api_responses
         result["success"] = True
 
+        # ── 结构变更检测 ──────────────────────────
+        change_report = interceptor.detect_structure_change()
+        result["structure_change"] = change_report
+        if change_report["detected"]:
+            logger.warn("structure_change_detected", extra={"confidence": change_report["confidence"], "reason": change_report["reason"], "metrics": change_report["metrics"]})
+            result["errors"].append(f"结构变更检测 ({change_report['confidence']:.0%} 置信度): {change_report['reason']}")
+
+    except NonRetryableError:
+        # 不可重试异常（Cookie 失效）→ 写入错误列表
+        result["errors"].append("不可恢复的采集异常")
     except Exception as exc:
         result["errors"].append(f"采集流程异常: {exc}")
     finally:
@@ -135,19 +174,46 @@ def _run_csp_export_sync(
     return result
 
 
+def _check_price_consistency(price_data: list[CollectedPriceData]) -> list[dict]:
+    """检查同一 SKU 的多来源价格是否一致。
+
+    同一 SKU 不同 API 来源的价格差异超过 5% 时记录警告。
+
+    Returns:
+        list of warning dicts (含 sku_id, price, avg_price, source_url)。
+    """
+    warnings: list[dict] = []
+    prices_by_sku: dict[str, list[tuple[str, float]]] = {}
+    for p in price_data:
+        if not p.sku_id or p.current_price <= 0:
+            continue
+        if p.sku_id not in prices_by_sku:
+            prices_by_sku[p.sku_id] = []
+        prices_by_sku[p.sku_id].append((p.source_url, p.current_price))
+
+    for sku_id, sources in prices_by_sku.items():
+        if len(sources) < 2:
+            continue
+        prices = [s[1] for s in sources]
+        avg = sum(prices) / len(prices)
+        for source_url, p in sources:
+            if avg > 0 and abs(p - avg) / avg > 0.05:
+                warnings.append({
+                    "sku_id": sku_id,
+                    "price": p,
+                    "avg_price": round(avg, 2),
+                    "source_url": source_url,
+                })
+    return warnings
+
+
 async def collect_ad_data(
     db: AsyncSession,
     cookie_manager: CookieManager,
     headless: bool = True,
     timeout: int = 60,
 ) -> dict:
-    """执行一次完整的数据采集，将结果写入数据库。
-
-    采集策略:
-      1. CSP SYCM 导出（主路径，USE_CSP_EXPORT=True 时启用）
-      2. API 拦截（回退路径）
-    """
-    import asyncio
+    """执行一次完整的数据采集，将结果写入数据库。"""
 
     # ── 前置检查：Cookie ──────────────────────────
     cookies = await cookie_manager.load_cookies("aliexpress.com")
@@ -165,8 +231,10 @@ async def collect_ad_data(
     prod_result = await db.execute(select(Product).where(Product.is_tracked))
     products = list(prod_result.scalars().all())
 
-    loop = asyncio.get_event_loop()
-    raw = await loop.run_in_executor(None, _run_collection_sync, cookies, headless, timeout)
+    # ── 在后台线程执行同步浏览器操作 ──────────────
+    raw = await asyncio.to_thread(
+        _run_collection_sync, cookies, headless, timeout
+    )
 
     if not raw.get("success"):
         return error_response(
@@ -174,12 +242,42 @@ async def collect_ad_data(
             "数据采集失败: " + "; ".join(raw.get("errors", [])),
         )
 
+    # ── 结构变更检测: 高置信度 → 停止本次写入 ──────
+    change_report = raw.get("structure_change", {})
+    if change_report.get("detected") and change_report.get("confidence", 0) >= 0.8:
+        return error_response(
+            ErrorCode.PAGE_CHANGED,
+            change_report.get("reason", "速卖通 API 结构可能已变更"),
+            details={
+                "confidence": change_report.get("confidence"),
+                "metrics": change_report.get("metrics", {}),
+                "action": "请检查速卖通后台是否改版，更新 URL/字段模式后重试",
+            },
+        )
+
     # ── 写入数据库 ────────────────────────────────
     saved_ads = 0
     saved_prices = 0
     saved_competitors = 0
     now = datetime.now(UTC)
+    price_data = raw.get("price_data", [])
 
+    # 价格一致性校验：同一 SKU 多来源价格差异超过 5% 时记日志
+    consistency_warnings = _check_price_consistency(
+        [p for p in price_data if isinstance(p, CollectedPriceData)]
+    )
+    for w in consistency_warnings:
+        logger.warn(
+            "price_inconsistency",
+            extra={
+                "sku_id": w["sku_id"],
+                "price": w["price"],
+                "avg_price": w["avg_price"],
+                "source_url": w["source_url"],
+            },
+        )
+
+    # 写入广告快照
     for ad in raw.get("ad_data", []):
         if not isinstance(ad, CollectedAdData):
             continue
@@ -201,37 +299,55 @@ async def collect_ad_data(
         db.add(snapshot)
         saved_ads += 1
 
-    for price in raw.get("price_data", []):
-        if not isinstance(price, CollectedPriceData):
-            continue
-        if not price.sku_id or price.current_price <= 0:
-            continue
-        snapshot = PriceSnapshot(
-            sku_id=price.sku_id,
-            snapshot_time=now,
-            current_price=price.current_price,
-        )
-        db.add(snapshot)
-        saved_prices += 1
+    # 写入价格快照（独立 try/except，不阻断主流程）
+    try:
+        for price in price_data:
+            if not isinstance(price, CollectedPriceData):
+                continue
+            if not price.sku_id or price.current_price <= 0:
+                continue
+            snapshot = PriceSnapshot(
+                sku_id=price.sku_id,
+                snapshot_time=now,
+                current_price=price.current_price,
+            )
+            db.add(snapshot)
+            saved_prices += 1
 
-    for comp in raw.get("competitor_data", []):
-        if not isinstance(comp, CollectedCompetitorData):
-            continue
-        if not comp.sku_id:
-            continue
-        snapshot = CompetitorSnapshot(
-            sku_id=comp.sku_id,
-            name=comp.name,
-            price=comp.price,
-            rating=comp.rating,
-            sales=comp.sales,
-            snapshot_time=now,
-            source_sku_id=comp.source_sku_id,
-        )
-        db.add(snapshot)
-        saved_competitors += 1
 
-    await db.flush()
+        for comp in raw.get("competitor_data", []):
+            if not isinstance(comp, CollectedCompetitorData):
+                continue
+            if not comp.sku_id:
+                continue
+            snapshot = CompetitorSnapshot(
+                sku_id=comp.sku_id,
+                name=comp.name,
+                price=comp.price,
+                rating=comp.rating,
+                sales=comp.sales,
+                snapshot_time=now,
+                source_sku_id=comp.source_sku_id,
+            )
+            db.add(snapshot)
+            saved_competitors += 1
+
+        await db.flush()
+    except Exception as exc:
+        logger.error(
+            "price_snapshot_write_failed",
+            extra={"error": str(exc), "price_count": len(price_data)},
+        )
+
+    # 如果本次采集没有任何价格记录，记录警告（不影响成功状态）
+    if saved_prices == 0:
+        logger.warn(
+            "no_price_snapshots_collected",
+            extra={
+                "ad_count": saved_ads,
+                "total_responses": raw.get("total_responses", 0),
+            },
+        )
 
     return {
         "success": True,
