@@ -10,6 +10,7 @@ from App.core.database import get_db
 from App.core.security import (
     generate_key,
     get_current_user,
+    invalidate_scope_cache,
     require_role,
     verify_api_key,
 )
@@ -37,14 +38,16 @@ async def create_api_key(
 ) -> ApiKeyReveal:
     """生成新 API Key。返回原始 key（仅此一次）。"""
     raw, hashed = generate_key()
-    record = ApiKey(key_hash=hashed, label=body.label)
+    record = ApiKey(key_hash=hashed, label=body.label, scope=body.scope)
     db.add(record)
     await db.flush()
     await db.refresh(record)
+    invalidate_scope_cache(hashed)
     return ApiKeyReveal(
         id=record.id,
         key_hash=record.key_hash,
         label=record.label,
+        scope=record.scope,
         is_active=record.is_active,
         created_at=record.created_at,
         revoked_at=record.revoked_at,
@@ -78,6 +81,7 @@ async def revoke_api_key(
     record.revoked_at = datetime.now(UTC)
     await db.flush()
     await db.refresh(record)
+    invalidate_scope_cache(record.key_hash)
     return ApiKeyRead.model_validate(record)
 
 

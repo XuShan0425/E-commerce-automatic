@@ -23,6 +23,11 @@ class ApiKey(AsyncAttrs, Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     key_hash: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     label: Mapped[str | None] = mapped_column(String(200))
+    scope: Mapped[str] = mapped_column(
+        String(500), default="admin",
+        comment="Comma-separated permission scopes, e.g. "
+        "'products:read,ads:read,profit:read'. 'admin' grants full access.",
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

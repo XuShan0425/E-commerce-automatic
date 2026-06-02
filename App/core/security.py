@@ -1,7 +1,10 @@
-"""鉴权工具 — API Key 验证 + JWT 登录 + 角色权限检查."""
+"""鉴权工具 — API Key 验证 + JWT 登录 + 角色权限检查 + 速率限制."""
 
 import hashlib
 import secrets
+import time
+from collections import defaultdict
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from fastapi import Depends, HTTPException, Security, status
@@ -59,7 +62,7 @@ def decode_access_token(token: str) -> dict:
         )
 
 
-# ── API Key 工具（已有）────────────────────────────
+# ── API Key 工具 ────────────────────────────────
 
 
 def hash_key(raw_key: str) -> str:
@@ -73,7 +76,7 @@ def generate_key() -> tuple[str, str]:
     return raw, hash_key(raw)
 
 
-# ── API Key 鉴权依赖（已有）────────────────────────
+# ── API Key 鉴权依赖（含 scope 检查）─────────────
 
 
 async def verify_api_key(
@@ -109,7 +112,129 @@ async def verify_api_key(
     return api_key
 
 
-# ── JWT 用户鉴权依赖（新增）────────────────────────
+_SCOPE_REGISTRY: dict[str, set[str]] = defaultdict(set)
+"""scope_registry[key_hash] = set of permitted scope strings (cached for performance)."""
+
+
+async def _get_key_scopes(api_key: str, db: AsyncSession) -> set[str]:
+    """获取 API Key 的 scope 集合（带缓存）。"""
+    from App.models.auth import ApiKey
+
+    key_hash = hash_key(api_key)
+    if key_hash in _SCOPE_REGISTRY:
+        return _SCOPE_REGISTRY[key_hash]
+
+    result = await db.execute(
+        select(ApiKey).where(ApiKey.key_hash == key_hash, ApiKey.is_active)
+    )
+    record = result.scalar_one_or_none()
+    if record is None:
+        return set()
+
+    scopes = set()
+    for s in record.scope.split(","):
+        s = s.strip()
+        if s:
+            scopes.add(s)
+    _SCOPE_REGISTRY[key_hash] = scopes
+    return scopes
+
+
+def invalidate_scope_cache(key_hash: str) -> None:
+    """清除指定 key 的 scope 缓存（创建/吊销 key 时调用）。"""
+    _SCOPE_REGISTRY.pop(key_hash, None)
+
+
+def require_scope(*required_scopes: str) -> Callable:
+    """FastAPI 依赖工厂：要求 API Key 拥有指定的 scope 之一。
+
+    'admin' scope 自动通过所有检查。
+
+    用法：
+        @router.get("/products")
+        async def list_products(
+            _=Depends(require_scope("products:read")),
+        ):
+            ...
+    """
+
+    async def _scope_checker(
+        api_key: str = Depends(verify_api_key),
+        db: AsyncSession = Depends(get_db),
+    ) -> str:
+        scopes = await _get_key_scopes(api_key, db)
+        if "admin" in scopes:
+            return api_key
+        if not required_scopes:
+            return api_key
+        if not scopes.intersection(required_scopes):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"API Key lacks required scope(s): {', '.join(required_scopes)}",
+            )
+        return api_key
+
+    return _scope_checker
+
+
+# ── 速率限制 ─────────────────────────────────────
+
+_RATE_LIMIT_WINDOW_SEC = 60  # 滑动窗口大小（秒）
+_RATE_LIMIT_DEFAULT_MAX = 60  # 每个窗口默认最大请求数
+
+# _rate_limits[api_key_hash] = [(timestamp, count), ...]
+_rate_limits: dict[str, list[float]] = defaultdict(list)
+
+
+def _rate_limit_key(key_hash: str) -> int:
+    """检查并记录一次请求的速率限制。返回剩余可用请求数，-1 表示被限流。"""
+    now = time.time()
+    window_start = now - _RATE_LIMIT_WINDOW_SEC
+    timestamps = _rate_limits[key_hash]
+
+    # 清理窗口外的旧记录
+    _rate_limits[key_hash] = [t for t in timestamps if t > window_start]
+
+    # 检查是否超限
+    current_count = len(_rate_limits[key_hash])
+    if current_count >= _RATE_LIMIT_DEFAULT_MAX:
+        return -1  # 被限流
+
+    # 记录本次请求
+    _rate_limits[key_hash].append(now)
+    return _RATE_LIMIT_DEFAULT_MAX - current_count - 1
+
+
+def get_rate_limit_headers(api_key: str) -> dict[str, str]:
+    """生成速率限制响应头。"""
+    key_hash = hash_key(api_key) if api_key else ""
+    remaining = _RATE_LIMIT_DEFAULT_MAX
+
+    if key_hash:
+        now = time.time()
+        window_start = now - _RATE_LIMIT_WINDOW_SEC
+        _rate_limits[key_hash] = [t for t in _rate_limits[key_hash] if t > window_start]
+        remaining = max(0, _RATE_LIMIT_DEFAULT_MAX - len(_rate_limits[key_hash]))
+
+    return {
+        "X-RateLimit-Limit": str(_RATE_LIMIT_DEFAULT_MAX),
+        "X-RateLimit-Window": str(_RATE_LIMIT_WINDOW_SEC),
+        "X-RateLimit-Remaining": str(remaining),
+    }
+
+
+def rate_limited(api_key: str) -> None:
+    """检查速率限制，超限时抛出 429。"""
+    remaining = _rate_limit_key(hash_key(api_key))
+    if remaining < 0:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Rate limit exceeded. Try again later.",
+            headers=get_rate_limit_headers(api_key),
+        )
+
+
+# ── JWT 用户鉴权依赖 ─────────────────────────
 
 
 async def get_current_user(
