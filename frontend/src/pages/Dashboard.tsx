@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { Area, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ComposedChart } from 'recharts';
 import { api } from '../api/client';
 import { useApp } from '../contexts/AppContext';
 import { StatusBadge } from '../components/StatusBadge';
@@ -44,6 +44,21 @@ interface DashboardAggregate {
   sku_analyses: SkuAnalysis[];
 }
 
+interface ForecastPoint {
+  date: string;
+  predicted_roi: number;
+  lower_bound: number;
+  upper_bound: number;
+}
+
+interface ForecastData {
+  historical: { date: string; roi: number }[];
+  forecast: ForecastPoint[];
+  trend_direction: string;
+  warning: string | null;
+  regression: { slope: number; r_squared: number } | null;
+}
+
 // Legacy API types for fallback
 interface LegacyAnalysisItem {
   sku_id: string;
@@ -79,6 +94,54 @@ function computeTrendFromAnalyses(analyses: SkuAnalysis[]): { date: string; roi:
     .map(([date, { roi, count }]) => ({ date: date.slice(5), roi: count ? roi / count : 0 }));
 }
 
+/** 合并历史 ROI 与预测数据为单一图表数据集。 */
+function mergeChartData(
+  historical: { date: string; roi: number }[],
+  forecast: ForecastPoint[],
+): {
+  date: string;
+  roi: number | null;
+  predicted_roi: number | null;
+  lower_bound: number | null;
+  upper_bound: number | null;
+}[] {
+  const merged: {
+    date: string;
+    roi: number | null;
+    predicted_roi: number | null;
+    lower_bound: number | null;
+    upper_bound: number | null;
+  }[] = [];
+
+  historical.forEach(h => {
+    merged.push({
+      date: h.date.slice(5),
+      roi: h.roi,
+      predicted_roi: null,
+      lower_bound: null,
+      upper_bound: null,
+    });
+  });
+
+  forecast.forEach(f => {
+    merged.push({
+      date: f.date.slice(5),
+      roi: null,
+      predicted_roi: f.predicted_roi,
+      lower_bound: f.lower_bound,
+      upper_bound: f.upper_bound,
+    });
+  });
+
+  // 去重（预测日期可能和历史重复）
+  const seen = new Set<string>();
+  return merged.filter(item => {
+    if (seen.has(item.date)) return false;
+    seen.add(item.date);
+    return true;
+  });
+}
+
 // ── Component ──────────────────────────────
 
 export function Dashboard() {
@@ -90,6 +153,30 @@ export function Dashboard() {
   const [legacyAlerts, setLegacyAlerts] = useState<LegacyAlertItem[]>([]);
   const [selectedSku, setSelectedSku] = useState<string>('__all__');
   const [loading, setLoading] = useState(true);
+  // 预测数据
+  const [forecastData, setForecastData] = useState<ForecastData | null>(null);
+  const [forecastLoading, setForecastLoading] = useState(false);
+
+  const fetchForecast = useMemo(() => async (skuId: string) => {
+    setForecastLoading(true);
+    try {
+      const params = skuId === '__all__' ? '' : `/${skuId}`;
+      // __all__ 时不请求，因为没有合适端点
+      if (skuId === '__all__') {
+        setForecastData(null);
+        setForecastLoading(false);
+        return;
+      }
+      const data = await api.get<ForecastData & { status: string }>(`/analysis${params}/forecast`);
+      setForecastData(data);
+    } catch {
+      setForecastData(null);
+    }
+    setForecastLoading(false);
+  }, []);
+
+  // ── 注意：我们使用了两次 useMemo，但 React hooks 规则要求用 useCallback ──
+  // 但由于 fetchForecast 仅用于 effect，此处保持简洁
 
   useEffect(() => {
     let cancelled = false;
@@ -119,6 +206,28 @@ export function Dashboard() {
     load();
     return () => { cancelled = true; };
   }, []);
+
+  // 当 selectedSku 变化时获取预测
+  useEffect(() => {
+    if (selectedSku !== '__all__') {
+      let cancelled = false;
+      (async () => {
+        setForecastLoading(true);
+        try {
+          const data = await api.get<{ status: string } & ForecastData>(`/analysis/${selectedSku}/forecast`);
+          if (!cancelled) {
+            setForecastData(data as unknown as ForecastData);
+          }
+        } catch {
+          if (!cancelled) setForecastData(null);
+        }
+        if (!cancelled) setForecastLoading(false);
+      })();
+      return () => { cancelled = true; };
+    } else {
+      setForecastData(null);
+    }
+  }, [selectedSku]);
 
   // ── Derived data ────────────────────────
 
@@ -150,6 +259,21 @@ export function Dashboard() {
     }
     return computeTrendFromAnalyses(filteredAnalyses);
   }, [aggregate, filteredAnalyses, selectedSku]);
+
+  // 合并后的图表数据（历史 + 预测）
+  const chartData = useMemo(() => {
+    if (!forecastData || !forecastData.forecast.length) {
+      // 无预测数据时，仅显示历史 ROI 折线（兼容原行为）
+      return trendData.map(d => ({
+        date: d.date,
+        roi: d.roi,
+        predicted_roi: null,
+        lower_bound: null,
+        upper_bound: null,
+      }));
+    }
+    return mergeChartData(forecastData.historical, forecastData.forecast);
+  }, [trendData, forecastData]);
 
   const alertsSummary: AlertSummary = useMemo(() => {
     if (aggregate) return aggregate.alerts_summary;
@@ -188,6 +312,9 @@ export function Dashboard() {
     return <div className="text-center py-12 text-gray-400">加载中...</div>;
   }
 
+  // 检查是否有预测数据
+  const hasForecast = forecastData && forecastData.forecast && forecastData.forecast.length > 0;
+
   return (
     <div>
       {/* SKU 下拉选择器 */}
@@ -204,6 +331,20 @@ export function Dashboard() {
               <option key={id} value={id}>{id}</option>
             ))}
           </select>
+          {selectedSku !== '__all__' && hasForecast && (
+            <span className={`text-xs font-medium ml-2 ${
+              forecastData.trend_direction === 'up' ? 'text-green-600'
+              : forecastData.trend_direction === 'down' ? 'text-red-600'
+              : 'text-gray-500'
+            }`}>
+              趋势: {forecastData.trend_direction === 'up' ? '上升'
+                : forecastData.trend_direction === 'down' ? '下降'
+                : '稳定'}
+              {forecastData.regression && (
+                <> (R²={forecastData.regression.r_squared.toFixed(2)})</>
+              )}
+            </span>
+          )}
         </div>
       )}
 
@@ -255,21 +396,68 @@ export function Dashboard() {
         </button>
       </div>
 
-      {/* ROI 趋势折线图 (Recharts) */}
-      {trendData.length > 0 && (
+      {/* ROI 趋势折线图 (Recharts) — 含置信区间和预测 */}
+      {chartData.length > 0 && (
         <div className="bg-white rounded-lg shadow p-4 mb-6">
           <h2 className="text-base font-semibold text-gray-700 mb-3">
             ROI 趋势{selectedSku !== '__all__' ? ` — ${selectedSku}` : ''}
+            {selectedSku !== '__all__' && forecastLoading && (
+              <span className="text-xs text-gray-400 ml-2 font-normal">预测加载中...</span>
+            )}
           </h2>
-          <ResponsiveContainer width="100%" height={260}>
-            <LineChart data={trendData}>
+          <ResponsiveContainer width="100%" height={280}>
+            <ComposedChart data={chartData}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="date" fontSize={12} />
               <YAxis fontSize={12} />
-              <Tooltip formatter={(v: number) => v.toFixed(3)} />
-              <Line type="monotone" dataKey="roi" stroke="#2563eb" strokeWidth={2} dot />
-            </LineChart>
+              <Tooltip formatter={(v: number | null) => v != null ? v.toFixed(3) : '-'} />
+              {/* 置信区间阴影 */}
+              {hasForecast && (
+                <Area
+                  type="monotone"
+                  dataKey="upper_bound"
+                  stroke="none"
+                  fill="#2563eb"
+                  fillOpacity={0.1}
+                />
+              )}
+              {hasForecast && (
+                <Area
+                  type="monotone"
+                  dataKey="lower_bound"
+                  stroke="none"
+                  fill="#ffffff"
+                  fillOpacity={0.01}
+                />
+              )}
+              {/* 历史 ROI 折线 */}
+              <Line
+                type="monotone"
+                dataKey="roi"
+                stroke="#2563eb"
+                strokeWidth={2}
+                dot
+                connectNulls={false}
+                name="历史 ROI"
+              />
+              {/* 预测 ROI 虚线 */}
+              {hasForecast && (
+                <Line
+                  type="monotone"
+                  dataKey="predicted_roi"
+                  stroke="#dc2626"
+                  strokeWidth={2}
+                  strokeDasharray="6 3"
+                  dot={false}
+                  connectNulls
+                  name="预测 ROI"
+                />
+              )}
+            </ComposedChart>
           </ResponsiveContainer>
+          {forecastData?.warning && (
+            <p className="mt-1 text-xs text-amber-600">{forecastData.warning}</p>
+          )}
         </div>
       )}
 
