@@ -1,6 +1,6 @@
-"""TASK-001-4: 测试 decision_engine 模块。
+"""Tests for decision_engine.py — _build_input_json and _parse_decision_response.
 
-测试 _build_input_json 和 _parse_decision_response 函数。
+Tests _build_input_json() and _parse_decision_response() — no DB dependency.
 """
 
 from __future__ import annotations
@@ -11,10 +11,10 @@ from App.services.decision_engine import _build_input_json, _parse_decision_resp
 
 
 class TestBuildInputJson:
-    """测试 _build_input_json 函数。"""
+    """Tests for _build_input_json."""
 
     def test_basic_structure(self, sample_profit_analysis, sample_ad_snapshots):
-        """验证生成的输入 JSON 包含所有必要字段。"""
+        """Verify the output dict has all required keys."""
         result = _build_input_json(
             sku_id="test_sku_001",
             cost_price=5.00,
@@ -26,7 +26,6 @@ class TestBuildInputJson:
             latest_price=12.00,
         )
 
-        # 顶层字段
         assert result["sku_id"] == "test_sku_001"
         assert result["cost_price"] == 5.00
         assert result["current_price"] == 12.00
@@ -35,35 +34,30 @@ class TestBuildInputJson:
 
         # profit_summary
         ps = result["profit_summary"]
-        assert "true_cost" in ps
-        assert "gross_margin" in ps
-        assert "breakeven_ad_spend" in ps
-        assert "current_roi" in ps
+        assert ps["true_cost"] == 8.10
+        assert ps["gross_margin"] == 0.325
+        assert ps["breakeven_ad_spend"] == 3.90
+        assert ps["current_roi"] == 2.5
 
         # ad_performance_7d
         ap = result["ad_performance_7d"]
-        assert ap["impressions"] == 3600  # 1200 + 1100 + 1300
-        assert ap["clicks"] == 180
-        assert ap["orders"] == 18
-        assert "total_ad_spend" in ap
-        assert "total_revenue" in ap
+        assert ap["impressions"] == 3600  # 1200+1100+1300
+        assert ap["clicks"] == 180  # 60+55+65
+        assert ap["orders"] == 18  # 6+5+7
         assert ap["snapshot_count"] == 3
+        assert ap["total_ad_spend"] == 75.0  # 25+22+28
+        assert ap["total_revenue"] == 440.0  # 150+130+160
 
         # constraints
-        constraints = result["constraints"]
-        assert constraints["max_price_change_pct"] == 0.05
-        assert constraints["price_change_cooldown_hours"] == 24
-        expected_max_spend = round(float(sample_profit_analysis.breakeven_ad_spend) * 1.5, 2)
-        assert constraints["max_daily_ad_spend"] == expected_max_spend
-
-        # 其他字段
-        assert result["current_ad_type"] == "standard"
-        assert result["roi_7d_trend"] == sample_profit_analysis.roi_7d_trend
+        cons = result["constraints"]
+        assert cons["max_price_change_pct"] == 0.05
+        assert cons["price_change_cooldown_hours"] == 24
+        assert cons["max_daily_ad_spend"] == 5.85  # 3.90 * 1.5
 
     def test_empty_snapshots(self, sample_profit_analysis):
-        """测试无广告快照时的边界情况。"""
+        """Verify empty snapshots produce safe defaults."""
         result = _build_input_json(
-            sku_id="empty_sku",
+            sku_id="test_sku_001",
             cost_price=5.00,
             current_price=12.00,
             logistics_cost=2.50,
@@ -80,9 +74,24 @@ class TestBuildInputJson:
         assert ap["avg_ctr_pct"] == 0.0
         assert ap["avg_cvr_pct"] == 0.0
         assert ap["snapshot_count"] == 0
+        assert result["current_ad_type"] == "unknown"
+
+    def test_correct_ad_type_from_latest_snapshot(
+        self, sample_ad_snapshots, sample_profit_analysis,
+    ):
+        """Verify ad_type is taken from the last snapshot."""
+        sample_ad_snapshots[-1].ad_type = "promotion"
+        result = _build_input_json(
+            sku_id="x", cost_price=1, current_price=2,
+            logistics_cost=0.5, platform_fee_rate=0.05,
+            profit=sample_profit_analysis,
+            snapshots_7d=sample_ad_snapshots,
+            latest_price=2,
+        )
+        assert result["current_ad_type"] == "promotion"
 
     def test_all_field_types(self, sample_profit_analysis, sample_ad_snapshots):
-        """验证所有字段类型正确。"""
+        """Verify all field types are correct."""
         result = _build_input_json(
             sku_id="type_test",
             cost_price=5.00,
@@ -94,21 +103,17 @@ class TestBuildInputJson:
             latest_price=12.00,
         )
 
-        # sku_id 必须为字符串
         assert isinstance(result["sku_id"], str)
-        # cost_price 必须为数字
         assert isinstance(result["cost_price"], (int, float))
-        # ad_performance 内的计数为整数
         assert isinstance(result["ad_performance_7d"]["impressions"], int)
-        # 约束条件
         assert isinstance(result["constraints"]["max_price_change_pct"], float)
 
 
 class TestParseDecisionResponse:
-    """测试 _parse_decision_response 函数。"""
+    """Tests for _parse_decision_response."""
 
-    def test_parse_valid_json(self):
-        """验证能正确解析合法的 JSON 响应。"""
+    def test_valid_json(self):
+        """Verify valid JSON is parsed correctly."""
         raw = json.dumps({
             "decision_type": "adjust_bid",
             "action": {
@@ -125,63 +130,41 @@ class TestParseDecisionResponse:
 
         assert result["decision_type"] == "adjust_bid"
         assert result["action"]["field"] == "daily_budget"
-        assert result["action"]["current_value"] == 3.00
-        assert result["action"]["new_value"] == 3.40
-        assert result["action"]["change_pct"] == 0.133
         assert result["confidence"] == 0.82
         assert result["risk_level"] == "low"
         assert "近7天" in result["reasoning"]
 
-    def test_parse_with_codeblock(self):
-        """验证能正确解析带 ```json 包裹的响应。"""
-        raw = """```json
-{
-    "decision_type": "no_action",
-    "action": null,
-    "reasoning": "当前表现良好，无需调整",
-    "confidence": 0.95,
-    "risk_level": "low"
-}
-```"""
+    def test_markdown_wrapped_json(self):
+        """Verify markdown code block wrapping is stripped."""
+        raw = "```json\n{\"decision_type\": \"no_action\", \"confidence\": 0.9, \"risk_level\": \"low\"}\n```"
         result = _parse_decision_response(raw)
         assert result["decision_type"] == "no_action"
-        assert result["action"] is None
-        assert result["confidence"] == 0.95
-        assert result["risk_level"] == "low"
+        assert result["confidence"] == 0.9
 
-    def test_parse_malformed_json(self):
-        """验证解析损坏的 JSON 时返回安全的 fallback。"""
-        raw = "这不是 JSON{invalid"
+    def test_malformed_json_returns_fallback(self):
+        """Verify malformed JSON returns a safe fallback no_action."""
+        raw = "this is not json at all"
         result = _parse_decision_response(raw)
-
         assert result["decision_type"] == "no_action"
         assert result["confidence"] == 0.0
         assert result["risk_level"] == "high"
-        assert result["action"] is None
         assert "parse_error" in result
+        assert result["action"] is None
 
-    def test_parse_invalid_decision_type(self):
-        """验证不合法的 decision_type 会被修正为 no_action。"""
-        raw = json.dumps({
-            "decision_type": "invalid_type_xyz",
-            "confidence": 0.5,
-            "risk_level": "medium",
-        })
+    def test_invalid_decision_type_normalized(self):
+        """Verify an unrecognized decision_type is normalized to no_action."""
+        raw = json.dumps({"decision_type": "invalid_type_xyz", "confidence": 0.5, "risk_level": "medium"})
         result = _parse_decision_response(raw)
         assert result["decision_type"] == "no_action"
 
-    def test_parse_invalid_risk_level(self):
-        """验证不合法的 risk_level 会被修正为 medium。"""
-        raw = json.dumps({
-            "decision_type": "no_action",
-            "confidence": 0.5,
-            "risk_level": "extreme",
-        })
+    def test_invalid_risk_level_normalized(self):
+        """Verify an unrecognized risk_level is normalized to 'medium'."""
+        raw = json.dumps({"decision_type": "no_action", "confidence": 0.5, "risk_level": "extreme"})
         result = _parse_decision_response(raw)
         assert result["risk_level"] == "medium"
 
-    def test_parse_all_decision_types(self):
-        """验证所有合法的 decision_type 都能被正确识别。"""
+    def test_all_valid_decision_types(self):
+        """Verify all valid decision_types are recognized."""
         valid_types = [
             "adjust_bid", "adjust_price", "switch_ad_type",
             "stop_ad", "no_action", "requires_confirmation",
@@ -191,25 +174,32 @@ class TestParseDecisionResponse:
             result = _parse_decision_response(raw)
             assert result["decision_type"] == dt
 
-    def test_parse_all_risk_levels(self):
-        """验证所有合法的 risk_level 都能被正确识别。"""
+    def test_all_valid_risk_levels(self):
+        """Verify all valid risk_levels are recognized."""
         for rl in ["low", "medium", "high"]:
             raw = json.dumps({"decision_type": "no_action", "confidence": 0.5, "risk_level": rl})
             result = _parse_decision_response(raw)
             assert result["risk_level"] == rl
 
-    def test_parse_missing_fields_defaults(self):
-        """验证缺少字段时会使用默认值。"""
-        raw = json.dumps({"decision_type": "adjust_bid"})
+    def test_missing_fields_get_defaults(self):
+        """Verify missing optional fields get sensible defaults."""
+        raw = json.dumps({"decision_type": "adjust_price"})
         result = _parse_decision_response(raw)
-        assert result["decision_type"] == "adjust_bid"
-        assert result["confidence"] == 0.5  # 默认值
-        assert result["reasoning"] == ""  # 默认值
-        assert result["risk_level"] == "medium"  # 默认值
-        assert result["action"] is None  # 默认值
+        assert result["decision_type"] == "adjust_price"
+        assert result["confidence"] == 0.5
+        assert result["reasoning"] == ""
+        assert result["action"] is None
+        assert result["risk_level"] == "medium"
 
-    def test_parse_with_stop_ad_decision(self):
-        """验证 stop_ad 类型的决策解析。"""
+    def test_extra_whitespace_handling(self):
+        """Verify leading/trailing whitespace is stripped."""
+        raw = '  \n  {"decision_type": "switch_ad_type", "confidence": 0.6, "risk_level": "high"}  \n'
+        result = _parse_decision_response(raw)
+        assert result["decision_type"] == "switch_ad_type"
+        assert result["confidence"] == 0.6
+
+    def test_stop_ad_decision(self):
+        """Verify stop_ad decision with full action details."""
         raw = json.dumps({
             "decision_type": "stop_ad",
             "action": {

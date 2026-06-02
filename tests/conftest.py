@@ -1,4 +1,4 @@
-"""TASK-001-4 测试共用 mock 和 fixture。"""
+"""TASK-001-4 / TASK-002-1 测试共用 mock 和 fixture。"""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import pytest
 
 @pytest.fixture
 def mock_db():
-    """创建 mock AsyncSession。"""
+    """Create a mock AsyncSession."""
     return mock.AsyncMock()
 
 
@@ -43,30 +43,9 @@ def sample_ad_snapshots():
             self.ctr = clicks / impressions if impressions > 0 else 0.0
 
     return [
-        FakeSnapshot(
-            impressions=1200,
-            clicks=60,
-            orders=6,
-            ad_spend=25.0,
-            revenue=150.0,
-            snapshot_time=now,
-        ),
-        FakeSnapshot(
-            impressions=1100,
-            clicks=55,
-            orders=5,
-            ad_spend=22.0,
-            revenue=130.0,
-            snapshot_time=now,
-        ),
-        FakeSnapshot(
-            impressions=1300,
-            clicks=65,
-            orders=7,
-            ad_spend=28.0,
-            revenue=160.0,
-            snapshot_time=now,
-        ),
+        FakeSnapshot(impressions=1200, clicks=60, orders=6, ad_spend=25.0, revenue=150.0, snapshot_time=now),
+        FakeSnapshot(impressions=1100, clicks=55, orders=5, ad_spend=22.0, revenue=130.0, snapshot_time=now),
+        FakeSnapshot(impressions=1300, clicks=65, orders=7, ad_spend=28.0, revenue=160.0, snapshot_time=now),
     ]
 
 
@@ -130,3 +109,37 @@ def negative_roi_analysis():
             {"date": "2026-05-31", "revenue": 30, "ad_spend": 55, "roi": -0.45},
         ],
     )
+
+
+@pytest.fixture
+def sample_analysis_result():
+    """Create a sample analysis result dict for execute_decision tests."""
+    return {
+        "sku_id": "test_sku_001",
+        "analyzed_at": "2026-06-01T12:00:00+00:00",
+        "success": True,
+        "profit": {
+            "id": 1,
+            "cost_price": 5.00,
+            "logistics_cost": 2.50,
+            "platform_fee": 0.60,
+            "true_cost": 8.10,
+            "gross_margin": 0.325,
+            "breakeven_ad_spend": 3.90,
+            "current_roi": 2.5,
+            "roi_7d_trend": [],
+        },
+        "decision": {
+            "decision_type": "no_action",
+            "action": None,
+            "reasoning": "Current performance is good, no adjustment needed.",
+            "confidence": 0.85,
+            "risk_level": "low",
+        },
+        "boundary": {
+            "passed": True,
+            "boundary_type": None,
+            "reason": "",
+        },
+        "error": None,
+    }
