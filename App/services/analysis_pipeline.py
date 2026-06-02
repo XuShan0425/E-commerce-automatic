@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -12,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from App.core.database import async_session_factory
 from App.core.logging import get_logger
 from App.models.base import PriceSnapshot, Product
+from App.services.analysis_monitor import get_metrics
 from App.services.boundary_checker import check_boundaries
 from App.services.decision_engine import generate_decision
 from App.services.feedback_service import get_decision_history
@@ -45,6 +47,7 @@ async def analyze_single_sku(
     Returns:
         完整分析结果 dict
     """
+    _start = time.monotonic()
 
     result: dict[str, Any] = {
         "sku_id": sku_id,
@@ -61,6 +64,7 @@ async def analyze_single_sku(
     product = await _get_product(db, sku_id)
     if product is None:
         result["error"] = f"SKU '{sku_id}' 不存在"
+        _record_metrics(sku_id, result, _start)
         return result
 
     try:
@@ -95,6 +99,7 @@ async def analyze_single_sku(
     except Exception as exc:
         result["error"] = f"利润计算失败: {exc}"
         logger.exception("利润计算失败: SKU=%s", sku_id)
+        _record_metrics(sku_id, result, _start)
         return result
 
     # ── Step 2: AI 决策生成 ────────────────────────
@@ -107,6 +112,7 @@ async def analyze_single_sku(
         }
         result["boundary"] = {"passed": True}
         result["success"] = True
+        _record_metrics(sku_id, result, _start)
         return result
 
     snapshots_7d = await _get_ad_snapshots_7d(db, sku_id)
@@ -126,6 +132,7 @@ async def analyze_single_sku(
     price_row = price_result.scalar_one_or_none()
     current_price = float(price_row) if price_row else float(product.cost_price)
 
+    used_ai = True
     try:
         decision = await generate_decision(
             db, sku_id,
@@ -140,6 +147,7 @@ async def analyze_single_sku(
         result["decision"] = decision
     except ValueError as exc:
         # API key 未配置
+        used_ai = False
         result["decision"] = {
             "decision_type": "no_action",
             "reasoning": f"AI 决策跳过（API key 未配置）: {exc}",
@@ -148,6 +156,7 @@ async def analyze_single_sku(
         }
         result["boundary"] = {"passed": True}
         result["success"] = True
+        _record_metrics(sku_id, result, _start)
         return result
     except Exception as exc:
         result["decision"] = {
@@ -158,6 +167,7 @@ async def analyze_single_sku(
         }
         result["boundary"] = {"passed": False, "boundary_type": "hard", "reason": str(exc)}
         result["success"] = True  # 利润已计算，只是 AI 失败了
+        _record_metrics(sku_id, result, _start, used_ai=True)
         return result
 
     # ── Step 3: 边界检查 ──────────────────────────
@@ -183,7 +193,34 @@ async def analyze_single_sku(
         result["decision"].get("decision_type", "?"),
         "passed" if result["boundary"]["passed"] else "blocked",
     )
+    _record_metrics(sku_id, result, _start, used_ai=used_ai)
     return result
+
+
+def _record_metrics(
+    sku_id: str,
+    result: dict[str, Any],
+    start: float,
+    *,
+    used_ai: bool = False,
+) -> None:
+    """将分析结果记录到监控指标。"""
+    duration_ms = (time.monotonic() - start) * 1000
+    metrics = get_metrics()
+    success = result.get("success", False)
+    decision_type = (result.get("decision") or {}).get("decision_type")
+    boundary = result.get("boundary") or {}
+    boundary_passed = boundary.get("passed")
+    error = result.get("error")
+    metrics.record_run(
+        sku_id=sku_id,
+        duration_ms=duration_ms,
+        success=success,
+        decision_type=decision_type,
+        boundary_passed=boundary_passed,
+        error=error,
+        used_ai=used_ai,
+    )
 
 
 async def analyze_all_skus(

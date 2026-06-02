@@ -15,6 +15,7 @@ from App.api.v1.competitors import router as competitors_router
 from App.api.v1.execution import router as execution_router
 from App.api.v1.health import router as health_router
 from App.api.v1.logistics_rates import router as logistics_rates_router
+from App.api.v1.monitoring import router as monitoring_router
 from App.api.v1.platform_fees import router as platform_fees_router
 from App.api.v1.products import router as products_router
 from App.api.v1.rate_parsing import router as rate_parsing_router
@@ -47,3 +48,4 @@ router.include_router(competitors_router, tags=["competitors"])
 router.include_router(ab_test_router, tags=["ab-testing"])
 router.include_router(affiliate_router, tags=["affiliate"])
 router.include_router(platform_router, tags=["platforms"])
+router.include_router(monitoring_router, tags=["monitoring"])
