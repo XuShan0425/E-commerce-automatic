@@ -19,8 +19,16 @@ interface ApiKey {
   created_at: string;
 }
 
+interface UserInfo {
+  id: number;
+  username: string;
+  role: string;
+  is_active: boolean;
+  created_at: string;
+}
+
 export function Settings() {
-  const { addToast } = useApp();
+  const { addToast, jwtToken, setJwtToken, username, setUsername, userRole, setUserRole } = useApp();
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   const [loading, setLoading] = useState(true);
@@ -28,6 +36,18 @@ export function Settings() {
   const [logContent, setLogContent] = useState('');
   const [logLoading, setLogLoading] = useState(false);
   const [restarting, setRestarting] = useState(false);
+
+  // 用户管理状态
+  const [users, setUsers] = useState<UserInfo[]>([]);
+  const [showLoginForm, setShowLoginForm] = useState(!jwtToken);
+  const [loginUsername, setLoginUsername] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [showRegisterForm, setShowRegisterForm] = useState(false);
+  const [regUsername, setRegUsername] = useState('');
+  const [regPassword, setRegPassword] = useState('');
+  const [regRole, setRegRole] = useState('operator');
+  const [regLoading, setRegLoading] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -48,32 +68,88 @@ export function Settings() {
 
   useEffect(() => { load(); }, []);
 
+  // 加载用户列表（管理员可用）
+  useEffect(() => {
+    if (userRole === 'admin') {
+      loadUsers();
+    }
+  }, [userRole]);
+
+  async function loadUsers() {
+    try {
+      const u = await api.get<UserInfo[]>('/auth/users');
+      setUsers(u);
+    } catch {
+      // 非 admin 可能 403，忽略
+    }
+  }
+
   async function handleLogin() {
+    if (!loginUsername.trim() || !loginPassword.trim()) return;
+    setLoginLoading(true);
     try {
-      const result = await api.post<any>('/login/start');
-      addToast(`浏览器已启动: ${result.message || '请在弹出的浏览器中完成登录'}`, 'info');
+      const res = await fetch('/api/v1/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: loginUsername.trim(), password: loginPassword }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: '登录失败' }));
+        addToast(err.detail || '登录失败', 'error');
+        return;
+      }
+      const data = await res.json();
+      setJwtToken(data.access_token);
+      setUsername(data.username);
+      setUserRole(data.role);
+      setShowLoginForm(false);
+      addToast(`登录成功，角色: ${data.role}`, 'success');
+      if (data.role === 'admin') loadUsers();
     } catch (e: any) {
-      addToast(e.message, 'error');
+      addToast(e.message || '网络错误', 'error');
+    } finally {
+      setLoginLoading(false);
     }
   }
 
-  async function handleCollectRun() {
-    try {
-      const r = await api.post<any>('/collect/run');
-      addToast(r.success ? '采集完成' : `采集失败: ${r.message}`, r.success ? 'success' : 'error');
-      load();
-    } catch (e: any) {
-      addToast(e.message, 'error');
-    }
+  function handleLogout() {
+    setJwtToken('');
+    setUsername('');
+    setUserRole(null);
+    setShowLoginForm(true);
+    addToast('已退出登录', 'info');
   }
 
-  async function handleScheduler(action: 'start' | 'stop') {
+  async function handleRegister() {
+    if (!regUsername.trim() || !regPassword.trim()) return;
+    setRegLoading(true);
     try {
-      await api.post(`/scheduler/${action}`);
-      addToast(action === 'start' ? '调度已启动' : '调度已停止', 'success');
-      load();
+      const res = await fetch('/api/v1/auth/register', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(jwtToken ? { 'Authorization': `Bearer ${jwtToken}` } : {}),
+        },
+        body: JSON.stringify({
+          username: regUsername.trim(),
+          password: regPassword,
+          role: regRole,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: '注册失败' }));
+        addToast(err.detail || '注册失败', 'error');
+        return;
+      }
+      addToast(`用户 ${regUsername} 创建成功`, 'success');
+      setShowRegisterForm(false);
+      setRegUsername('');
+      setRegPassword('');
+      loadUsers();
     } catch (e: any) {
-      addToast(e.message, 'error');
+      addToast(e.message || '网络错误', 'error');
+    } finally {
+      setRegLoading(false);
     }
   }
 
@@ -82,7 +158,6 @@ export function Settings() {
     try {
       const r = await api.post<any>('/api-keys/', { label: label || null });
       addToast(`API Key 创建成功: ${r.raw_key} (仅此一次可见，请复制保存)`, 'success');
-      // 显示完整 key
       alert(`新 API Key (请复制保存，关闭后不可找回):\n\n${r.raw_key}`);
       load();
     } catch (e: any) {
@@ -95,6 +170,16 @@ export function Settings() {
     try {
       await api.post(`/api-keys/${id}/revoke`);
       addToast('已吊销', 'success');
+      load();
+    } catch (e: any) {
+      addToast(e.message, 'error');
+    }
+  }
+
+  async function handleScheduler(action: 'start' | 'stop') {
+    try {
+      await api.post(`/scheduler/${action}`);
+      addToast(action === 'start' ? '调度已启动' : '调度已停止', 'success');
       load();
     } catch (e: any) {
       addToast(e.message, 'error');
@@ -137,7 +222,6 @@ export function Settings() {
     try {
       await api.post('/system/restart');
       addToast('重启指令已发送，等待服务重启...', 'info');
-      // 轮询等待重启完成
       let retries = 0;
       const poll = setInterval(async () => {
         retries++;
@@ -179,6 +263,149 @@ export function Settings() {
 
   return (
     <div className="space-y-6 max-w-3xl">
+      {/* ── 用户认证 ── */}
+      <section className="bg-white rounded-lg shadow p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-base font-semibold text-gray-700">用户认证</h2>
+          {jwtToken && (
+            <button onClick={handleLogout} className="px-3 py-1.5 bg-red-100 text-red-700 rounded text-sm hover:bg-red-200">
+              退出登录
+            </button>
+          )}
+        </div>
+        {showLoginForm && !jwtToken ? (
+          <div className="flex gap-2 items-end">
+            <div className="flex-1">
+              <label className="block text-xs text-gray-500 mb-1">用户名</label>
+              <input
+                type="text"
+                value={loginUsername}
+                onChange={e => setLoginUsername(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleLogin()}
+                className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm"
+                placeholder="输入用户名"
+              />
+            </div>
+            <div className="flex-1">
+              <label className="block text-xs text-gray-500 mb-1">密码</label>
+              <input
+                type="password"
+                value={loginPassword}
+                onChange={e => setLoginPassword(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleLogin()}
+                className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm"
+                placeholder="输入密码"
+              />
+            </div>
+            <button
+              onClick={handleLogin}
+              disabled={loginLoading || !loginUsername.trim() || !loginPassword.trim()}
+              className="px-4 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50"
+            >
+              {loginLoading ? '登录中...' : '登录'}
+            </button>
+          </div>
+        ) : jwtToken ? (
+          <div className="text-sm text-gray-600">
+            当前用户: <span className="font-semibold">{username}</span>
+            <span className="ml-2 inline-block px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs">
+              {userRole === 'admin' ? '管理员' : '运营者'}
+            </span>
+          </div>
+        ) : null}
+      </section>
+
+      {/* ── 用户管理（仅管理员） ── */}
+      {userRole === 'admin' && (
+        <section className="bg-white rounded-lg shadow p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-base font-semibold text-gray-700">用户管理</h2>
+            <button
+              onClick={() => setShowRegisterForm(!showRegisterForm)}
+              className="px-3 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-700"
+            >
+              + 创建用户
+            </button>
+          </div>
+
+          {showRegisterForm && (
+            <div className="mb-4 p-3 bg-gray-50 rounded border flex flex-wrap gap-2 items-end">
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">用户名</label>
+                <input
+                  type="text"
+                  value={regUsername}
+                  onChange={e => setRegUsername(e.target.value)}
+                  className="px-3 py-1.5 border border-gray-300 rounded text-sm"
+                  placeholder="用户名"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">密码</label>
+                <input
+                  type="password"
+                  value={regPassword}
+                  onChange={e => setRegPassword(e.target.value)}
+                  className="px-3 py-1.5 border border-gray-300 rounded text-sm"
+                  placeholder="密码"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">角色</label>
+                <select
+                  value={regRole}
+                  onChange={e => setRegRole(e.target.value)}
+                  className="px-3 py-1.5 border border-gray-300 rounded text-sm"
+                >
+                  <option value="operator">运营者</option>
+                  <option value="admin">管理员</option>
+                </select>
+              </div>
+              <button
+                onClick={handleRegister}
+                disabled={regLoading || !regUsername.trim() || !regPassword.trim()}
+                className="px-4 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50"
+              >
+                {regLoading ? '创建中...' : '确认创建'}
+              </button>
+            </div>
+          )}
+
+          {users.length === 0 ? (
+            <div className="text-center text-gray-400 text-sm py-4">暂无用户</div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-gray-500 text-left">
+                  <th className="py-1">用户名</th>
+                  <th className="py-1">角色</th>
+                  <th className="py-1">状态</th>
+                  <th className="py-1">创建时间</th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map(u => (
+                  <tr key={u.id} className="border-t">
+                    <td className="py-1 font-medium">{u.username}</td>
+                    <td className="py-1">
+                      <span className={`inline-block px-2 py-0.5 rounded text-xs ${
+                        u.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'
+                      }`}>
+                        {u.role === 'admin' ? '管理员' : '运营者'}
+                      </span>
+                    </td>
+                    <td className="py-1"><StatusBadge status={u.is_active ? 'success' : 'rejected'} /></td>
+                    <td className="py-1 text-xs">
+                      {u.created_at ? new Date(u.created_at).toLocaleString('zh-CN') : '-'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </section>
+      )}
+
       {/* ── 系统状态 ── */}
       <section className="bg-white rounded-lg shadow p-4">
         <h2 className="text-base font-semibold text-gray-700 mb-3">系统状态</h2>
@@ -210,10 +437,25 @@ export function Settings() {
       <section className="bg-white rounded-lg shadow p-4">
         <h2 className="text-base font-semibold text-gray-700 mb-3">快捷操作</h2>
         <div className="flex flex-wrap gap-2">
-          <button onClick={handleLogin} className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">
+          <button onClick={async () => {
+            try {
+              const result = await api.post<any>('/login/start');
+              addToast(`浏览器已启动: ${result.message || '请在弹出的浏览器中完成登录'}`, 'info');
+            } catch (e: any) {
+              addToast(e.message, 'error');
+            }
+          }} className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">
             启动登录
           </button>
-          <button onClick={handleCollectRun} className="px-3 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-700">
+          <button onClick={async () => {
+            try {
+              const r = await api.post<any>('/collect/run');
+              addToast(r.success ? '采集完成' : `采集失败: ${r.message}`, r.success ? 'success' : 'error');
+              load();
+            } catch (e: any) {
+              addToast(e.message, 'error');
+            }
+          }} className="px-3 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-700">
             手动采集
           </button>
           <button onClick={handleAnalysisRun} className="px-3 py-1.5 bg-purple-600 text-white rounded text-sm hover:bg-purple-700">
@@ -226,18 +468,18 @@ export function Settings() {
             邮件测试
           </button>
           <button onClick={handleRestart} disabled={restarting} className="px-3 py-1.5 bg-orange-600 text-white rounded text-sm hover:bg-orange-700 disabled:opacity-50">
-            {restarting ? '重启中...' : '🔄 热重启'}
+            {restarting ? '重启中...' : '重启'}
           </button>
           <button onClick={handleOpenLog} className="px-3 py-1.5 bg-gray-800 text-white rounded text-sm hover:bg-gray-900">
-            📋 查看日志
+            查看日志
           </button>
         </div>
         <div className="flex gap-2 mt-2">
           <button onClick={() => handleScheduler('start')} className="px-3 py-1.5 bg-green-100 text-green-700 rounded text-sm hover:bg-green-200">
-            ▶ 启动调度
+            启动调度
           </button>
           <button onClick={() => handleScheduler('stop')} className="px-3 py-1.5 bg-red-100 text-red-700 rounded text-sm hover:bg-red-200">
-            ⏹ 停止调度
+            停止调度
           </button>
         </div>
       </section>
