@@ -91,6 +91,7 @@ async def analyze_single_sku(
         return result
 
     snapshots_7d = await _get_ad_snapshots_7d(db, sku_id)
+    result["snapshots_7d"] = snapshots_7d  # 传递给执行层用于生成关闭报告
     fee_rate = await _get_platform_fee_rate(db, product.category)
 
     price_result = await db.execute(

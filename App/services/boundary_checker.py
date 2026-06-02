@@ -366,6 +366,315 @@ async def check_hard_boundaries(
     }
 
 
+def _compute_estimated_traffic_impact(
+    profit: ProfitAnalysis | dict[str, Any],
+    decision: dict[str, Any],
+) -> dict[str, Any]:
+    """估算关闭推广活动的流量影响。
+
+    基于近 7 天广告数据（如果有）或 ROI 趋势计算预计流量减少量。
+    当广告活动关闭后，预计流量下降 = 当前广告带来的流量 × 衰减系数。
+
+    Returns:
+        {"estimated_traffic_loss_pct": float, "explanation": str}
+    """
+    # ROI 趋势可能为 ProfitAnalysis 对象或 dict
+    roi_trend = None
+    if isinstance(profit, dict):
+        roi_trend = profit.get("roi_7d_trend")
+    else:
+        roi_trend = getattr(profit, "roi_7d_trend", None)
+
+    # 默认使用行业经验值：关闭推广后流量下降约 30-70%
+    estimated_loss_pct = 0.50  # 默认 50%
+
+    if roi_trend and isinstance(roi_trend, list) and len(roi_trend) > 0:
+        # 看最近几天的 ROI 趋势：ROI 越低，流量下降影响越不明显
+        recent_rois = []
+        for item in roi_trend:
+            if isinstance(item, dict):
+                recent_rois.append(item.get("roi", 0))
+            elif isinstance(item, (int, float)):
+                recent_rois.append(item)
+
+        avg_roi = sum(recent_rois) / len(recent_rois) if recent_rois else 0
+
+        # 如果 ROI 已经很低，说明广告效果本身就不好，关闭后流量损失相对较小
+        if avg_roi < 0.5:
+            estimated_loss_pct = 0.30
+        elif avg_roi < 1.0:
+            estimated_loss_pct = 0.40
+        elif avg_roi < 2.0:
+            estimated_loss_pct = 0.60
+        else:
+            estimated_loss_pct = 0.70
+
+    return {
+        "estimated_traffic_loss_pct": round(estimated_loss_pct, 2),
+        "explanation": (
+            f"关闭推广活动后预计流量下降约 {estimated_loss_pct:.0%}，"
+            f"按 {len(roi_trend) if roi_trend else 0} 天平均 ROI "
+            f"{_safe_avg_roi(roi_trend):.2f} 估算"
+        ),
+    }
+
+
+def _safe_avg_roi(roi_trend: list | None) -> float:
+    """安全计算 ROI 趋势平均值。"""
+    if not roi_trend or not isinstance(roi_trend, list):
+        return 0.0
+    values = []
+    for item in roi_trend:
+        if isinstance(item, dict):
+            v = item.get("roi", 0)
+        elif isinstance(item, (int, float)):
+            v = item
+        else:
+            v = 0
+        values.append(v)
+    return sum(values) / len(values) if values else 0.0
+
+
+def _format_snapshots_summary(snapshots_7d: list[dict] | None) -> dict[str, Any]:
+    """从 7 天快照数据汇总摘要。"""
+    if not snapshots_7d:
+        return {
+            "total_impressions": 0,
+            "total_clicks": 0,
+            "avg_ctr": 0.0,
+            "total_orders": 0,
+            "avg_conversion_rate": 0.0,
+            "total_ad_spend": 0.0,
+            "total_revenue": 0.0,
+            "days_of_data": 0,
+        }
+
+    summary = {
+        "total_impressions": sum(s.get("impressions", 0) for s in snapshots_7d),
+        "total_clicks": sum(s.get("clicks", 0) for s in snapshots_7d),
+        "total_orders": sum(s.get("orders", 0) for s in snapshots_7d),
+        "total_ad_spend": sum(s.get("ad_spend", 0) for s in snapshots_7d),
+        "total_revenue": sum(s.get("revenue", 0) for s in snapshots_7d),
+        "days_of_data": len(snapshots_7d),
+    }
+
+    ctr_values = [s.get("ctr", 0) for s in snapshots_7d if s.get("ctr")]
+    cr_values = [s.get("conversion_rate", 0) for s in snapshots_7d if s.get("conversion_rate")]
+
+    summary["avg_ctr"] = round(sum(ctr_values) / len(ctr_values), 4) if ctr_values else 0.0
+    summary["avg_conversion_rate"] = (
+        round(sum(cr_values) / len(cr_values), 4) if cr_values else 0.0
+    )
+
+    return summary
+
+
+async def generate_closure_report(
+    db: AsyncSession,
+    sku_id: str,
+    decision: dict[str, Any],
+    profit: ProfitAnalysis | dict[str, Any] | None = None,
+    snapshots_7d: list[dict] | None = None,
+) -> dict[str, Any]:
+    """生成推广活动关闭说明报告。
+
+    根据 CLAUDE.md 报告规范，当软边界（关闭推广活动）触发时生成。
+    报告包含：
+    1. 活动的完整数据摘要
+    2. 关闭理由（数据驱动）
+    3. 预计影响（流量减少估算）
+    4. 替代方案建议
+
+    Args:
+        db: 数据库会话（用于查询补充数据）
+        sku_id: 商品 SKU ID
+        decision: AI 生成的决策 dict
+        profit: 利润分析记录（可选）
+        snapshots_7d: 近 7 天广告快照数据（可选）
+
+    Returns:
+        报告 dict
+    """
+    reasoning = decision.get("reasoning", "")
+    action = decision.get("action") or {}
+    confidence = decision.get("confidence", 0.0)
+
+    # ── 数据摘要 ──────────────────────────────────
+    data_summary = _format_snapshots_summary(snapshots_7d)
+
+    # ── 利润数据 ──────────────────────────────────
+    profit_data: dict[str, Any] = {}
+    if isinstance(profit, dict):
+        profit_data = {
+            "gross_margin": profit.get("gross_margin"),
+            "breakeven_ad_spend": profit.get("breakeven_ad_spend"),
+            "current_roi": profit.get("current_roi"),
+            "roi_7d_trend": profit.get("roi_7d_trend"),
+        }
+    elif profit is not None:
+        profit_data = {
+            "gross_margin": float(getattr(profit, "gross_margin", 0)),
+            "breakeven_ad_spend": float(getattr(profit, "breakeven_ad_spend", 0)),
+            "current_roi": float(getattr(profit, "current_roi", 0)),
+            "roi_7d_trend": getattr(profit, "roi_7d_trend", None),
+        }
+
+    # ── 关闭理由（数据驱动）─────────────────────────
+    closure_reasons: list[str] = [reasoning] if reasoning else []
+    if profit_data.get("current_roi") is not None and profit_data["current_roi"] < 0:
+        closure_reasons.append(
+            f"当前 ROI ({profit_data['current_roi']:.2f}) 为负，广告投入无法收回"
+        )
+    if profit_data.get("gross_margin") is not None and profit_data["gross_margin"] < 0:
+        closure_reasons.append(
+            f"毛利率 ({profit_data['gross_margin']:.1%}) 为负，商品本身不盈利"
+        )
+    if not closure_reasons:
+        closure_reasons.append("AI 分析认为当前推广策略不具备持续投放价值")
+
+    # ── 预计影响 ──────────────────────────────────
+    traffic_impact = _compute_estimated_traffic_impact(profit, decision)
+
+    # ── 替代方案建议 ──────────────────────────────
+    alternatives: list[str] = []
+    if profit_data.get("current_roi") is not None and profit_data["current_roi"] < 0:
+        alternatives.append("优化商品 Listing（主图、标题、价格），提升自然转化率后重新投放")
+    if profit_data.get("gross_margin") is not None:
+        alternatives.append("评估供应链成本优化空间，改善毛利率后重新评估广告策略")
+    alternatives.append("尝试切换广告类型（如从站内推广转为联盟营销），降低单次点击成本")
+    if not alternatives:
+        alternatives.append("在控制台查看详细报告后，结合运营经验决定是否调整策略重新投放")
+
+    report = {
+        "sku_id": sku_id,
+        "report_type": "campaign_closure",
+        "generated_at": datetime.now(UTC).isoformat(),
+        "decision_summary": {
+            "decision_type": "stop_ad",
+            "confidence": confidence,
+            "action": action,
+        },
+        "data_summary": data_summary,
+        "profit_data": profit_data,
+        "closure_reasons": closure_reasons,
+        "estimated_impact": traffic_impact,
+        "alternatives": alternatives,
+    }
+
+    logger.info(
+        "已生成关闭说明报告: SKU=%s",
+        sku_id,
+        extra={"sku_id": sku_id, "closure_reasons": closure_reasons},
+    )
+    return report
+
+
+async def check_soft_boundaries(
+    db: AsyncSession,
+    sku_id: str,
+    decision: dict[str, Any],
+    profit: ProfitAnalysis | dict[str, Any] | None = None,
+    snapshots_7d: list[dict] | None = None,
+) -> dict[str, Any]:
+    """检查 AI 决策是否触发软边界。
+
+    这是 TASK-003-4 入口函数，供调度/执行层调用。
+    与 check_boundaries() 不同，这是一个独立的预检，只关注软边界。
+
+    软边界触发条件：
+    1. decision_type == "stop_ad" — 关闭推广活动，需要人工确认
+    2. decision_type == "requires_confirmation" — AI 建议的重大操作，需要人工确认
+
+    触发时会附带生成推广活动关闭说明报告。
+
+    Args:
+        db: 数据库会话
+        sku_id: 商品 SKU ID
+        decision: AI 生成的决策 dict
+        profit: 利润分析记录（可选，用于生成报告）
+        snapshots_7d: 近 7 天广告快照数据（可选，用于生成报告）
+
+    Returns:
+        {
+            "passed": bool,
+            "boundary_type": str | None,
+            "reason": str,
+            "details": dict,
+            "closure_report": dict | None,  # 仅 stop_ad 时生成
+        }
+    """
+    decision_type = decision.get("decision_type", "")
+
+    # ── 软边界 1: 关闭推广活动 ─────────────────────
+    if decision_type == "stop_ad":
+        # 生成关闭说明报告
+        report = await generate_closure_report(
+            db, sku_id, decision, profit=profit, snapshots_7d=snapshots_7d,
+        )
+
+        logger.info(
+            "软边界触发: SKU=%s stop_ad 待确认 — 已生成关闭报告",
+            sku_id,
+            extra={
+                "sku_id": sku_id,
+                "boundary_type": "soft",
+                "decision_type": "stop_ad",
+                "report_generated": True,
+            },
+        )
+        return {
+            "passed": False,
+            "boundary_type": "soft",
+            "reason": "决定关闭推广活动，需要人工确认",
+            "details": {
+                "decision_type": "stop_ad",
+                "decision": decision,
+            },
+            "closure_report": report,
+        }
+
+    # ── 软边界 2: requires_confirmation ──────────
+    if decision_type == "requires_confirmation":
+        logger.info(
+            "软边界触发: SKU=%s requires_confirmation 待确认",
+            sku_id,
+            extra={
+                "sku_id": sku_id,
+                "boundary_type": "soft",
+                "decision_type": "requires_confirmation",
+            },
+        )
+        return {
+            "passed": False,
+            "boundary_type": "soft",
+            "reason": "AI 建议需要人工确认的重大操作",
+            "details": {
+                "decision": decision,
+            },
+            "closure_report": None,
+        }
+
+    # ── 未触发软边界 ─────────────────────────────
+    logger.info(
+        "软边界检查通过: SKU=%s decision=%s",
+        sku_id,
+        decision_type,
+        extra={
+            "sku_id": sku_id,
+            "boundary_type": None,
+            "decision_type": decision_type,
+            "passed": True,
+        },
+    )
+    return {
+        "passed": True,
+        "boundary_type": None,
+        "reason": "",
+        "details": {},
+        "closure_report": None,
+    }
+
+
 async def check_boundaries(
     db: AsyncSession,
     sku_id: str,
