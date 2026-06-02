@@ -1,7 +1,7 @@
 """全部模型导出."""
 
 from App.models.alert import Alert
-from App.models.auth import ApiKey
+from App.models.auth import ApiKey, User
 from App.models.base import (
     AdSnapshot,
     LogisticsRate,
