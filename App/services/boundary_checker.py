@@ -730,6 +730,7 @@ async def check_boundaries(
             cookie_reason,
             extra={"sku_id": sku_id, "boundary_type": "hard", "cookie_status": cookie_reason},
         )
+        )
         return BoundaryResult(
             passed=False,
             boundary_type="hard",
@@ -843,22 +844,13 @@ async def check_boundaries(
     # ── 全部通过 ──────────────────────────────────
     if not reasons:
         logger.info(
-            "边界检查通过: SKU=%s decision=%s",
-            sku_id,
-            decision_type,
-            extra={
-                "sku_id": sku_id,
-                "boundary_type": None,
-                "decision_type": decision_type,
-                "passed": True,
-            },
+            "边界检查通过",
+            extra={"sku_id": sku_id, "decision_type": decision_type},
         )
         return BoundaryResult(passed=True)
 
     logger.warning(
-        "边界检查未通过: SKU=%s reason=%s",
-        sku_id,
-        "; ".join(reasons),
-        extra={"sku_id": sku_id, "reasons": reasons},
+        "边界检查未通过",
+        extra={"sku_id": sku_id, "reason": "; ".join(reasons)},
     )
     return BoundaryResult(passed=False, reason="; ".join(reasons), details=details)
