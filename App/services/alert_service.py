@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,7 +47,7 @@ async def resolve_alert(db: AsyncSession, alert_id: int) -> Alert | None:
     if alert is None:
         return None
     alert.is_resolved = True
-    alert.resolved_at = datetime.now(timezone.utc)
+    alert.resolved_at = datetime.now(datetime.UTC)
     await db.flush()
     await db.refresh(alert)
     return alert
@@ -57,7 +57,7 @@ async def get_active_alerts(db: AsyncSession, limit: int = 50) -> list[Alert]:
     """获取所有未处理警报，按时间倒序。"""
     result = await db.execute(
         select(Alert)
-        .where(Alert.is_resolved == False)
+        .where(Alert.is_resolved.is_(False))
         .order_by(Alert.created_at.desc())
         .limit(limit)
     )
@@ -73,7 +73,7 @@ async def _set_global_stop(db: AsyncSession, enabled: bool) -> None:
     value = {
         "enabled": enabled,
         "reason": "alert_triggered",
-        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(datetime.UTC).isoformat(),
     }
     if record is not None:
         record.value = value  # type: ignore[assignment]
