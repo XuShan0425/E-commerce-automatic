@@ -12,16 +12,13 @@
 
 from __future__ import annotations
 
-import json
 import logging
-import os
-import tempfile
 import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from App.models.base import Product
 
