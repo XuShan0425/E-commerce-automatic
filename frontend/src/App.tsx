@@ -11,6 +11,7 @@ const Alerts = lazy(() => import('./pages/Alerts'));
 const Settings = lazy(() => import('./pages/Settings'));
 const RatesSettings = lazy(() => import('./pages/RatesSettings'));
 const Reports = lazy(() => import('./pages/Reports'));
+const ExportPage = lazy(() => import('./pages/Export'));
 
 function PageLoading() {
   return (
@@ -34,6 +35,7 @@ export function App() {
               <Route path="/settings" element={<Settings />} />
               <Route path="/rates-settings" element={<RatesSettings />} />
               <Route path="/reports" element={<Reports />} />
+              <Route path="/export" element={<ExportPage />} />
             </Routes>
           </Suspense>
         </Layout>
