@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,6 +28,11 @@ router = APIRouter(prefix="/system", tags=["system"])
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _RESTART_FILE = _PROJECT_ROOT / "data" / "restart.flag"
 _LOG_FILE = _PROJECT_ROOT / "logs" / "app.log"
+
+
+class GlobalStopRequest(BaseModel):
+    """全局停止开关请求体。"""
+    enabled: bool
 
 
 @router.get("/status")
@@ -71,6 +78,37 @@ async def system_status(db: AsyncSession = Depends(get_db)) -> dict:
         "last_collection": last_collection,
         "api_keys_count": api_keys_count,
     }
+
+
+# ── 全局停止开关 ─────────────────────────────────
+
+@router.post("/global-stop")
+async def set_global_stop(
+    body: GlobalStopRequest,
+    _api_key: str = Depends(verify_api_key),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """手动设置或清除全局停止标志。"""
+    result = await db.execute(
+        select(SystemState).where(SystemState.key == "global_stop")
+    )
+    record = result.scalar_one_or_none()
+    value = {
+        "enabled": body.enabled,
+        "reason": "manual_toggle",
+        "updated_at": datetime.now(timezone.utc).isoformat(),  # noqa: UP017
+    }
+    if record is not None:
+        record.value = value  # type: ignore[assignment]
+    else:
+        record = SystemState(key="global_stop", value=value)  # type: ignore[arg-type]
+        db.add(record)
+    await db.flush()
+    logger.info(
+        "全局停止状态已手动切换: %s", "启用" if body.enabled else "清除",
+        extra={"enabled": body.enabled},
+    )
+    return {"status": "ok", "global_stop": body.enabled}
 
 
 # ── 热重启 ──────────────────────────────────────────
