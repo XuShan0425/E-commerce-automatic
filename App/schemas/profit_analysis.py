@@ -21,3 +21,29 @@ class ProfitAnalysisRead(ProfitAnalysisBase):
     calc_time: datetime
 
     model_config = {"from_attributes": True}
+
+
+class RoiTrendPoint(BaseModel):
+    """单日 ROI 趋势数据点."""
+
+    date: str
+    roi: float
+    revenue: float
+    ad_spend: float
+
+
+class RoiTrendItem(BaseModel):
+    """单个 SKU 的 ROI 趋势."""
+
+    sku_id: str
+    trend: list[RoiTrendPoint]
+
+
+class RoiTrendSummary(BaseModel):
+    """按日聚合的 ROI 趋势摘要."""
+
+    date: str
+    roi: float
+    revenue: float
+    ad_spend: float
+    sku_count: int
