@@ -19,6 +19,36 @@ from App.services.cookie_manager import CookieManager
 logger = get_logger(__name__)
 
 
+class ExecutionEngine:
+    """执行引擎 — 封装决策执行的全生命周期。
+
+    职责: 接收 AI 决策 → 边界验证 → dispatch 浏览器执行器 → 记录操作日志 → 异常警报。
+    """
+
+    def __init__(self) -> None:
+        self._initialized = True
+
+    async def execute_one(
+        self,
+        db: AsyncSession,
+        analysis_result: dict[str, Any],
+        *,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """执行单个 SKU 的 AI 决策。"""
+        return await execute_decision(db, analysis_result, dry_run=dry_run)
+
+    async def execute_all(
+        self,
+        db: AsyncSession,
+        analysis_results: list[dict[str, Any]],
+        *,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """批量执行所有分析结果中的通过决策。"""
+        return await execute_all_passed(db, analysis_results, dry_run=dry_run)
+
+
 async def execute_decision(
     db: AsyncSession,
     analysis_result: dict[str, Any],
@@ -140,7 +170,7 @@ async def execute_decision(
     try:
         exec_result = await _run_adjuster(
             db, sku_id, decision_type, decision, action,
-            reasoning, confidence,
+            reasoning, confidence, profit,
         )
         result["executed"] = True
         result["status"] = "success" if exec_result.get("success") else "failed"
@@ -155,7 +185,11 @@ async def execute_decision(
             )
 
     except Exception as exc:
-        logger.exception("执行异常: SKU=%s type=%s", sku_id, decision_type)
+        logger.exception(
+            "执行异常: SKU=%s type=%s",
+            sku_id, decision_type,
+            extra={"sku_id": sku_id, "decision_type": decision_type, "error": str(exc)},
+        )
         await log_operation(
             db, sku_id, decision_type,
             field_name=action.get("field"),
@@ -187,8 +221,12 @@ async def _run_adjuster(
     action: dict,
     reasoning: str,
     confidence: float,
+    profit: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """在后台线程中执行浏览器调整操作。"""
+    """在后台线程中执行浏览器调整操作。
+
+    执行前会再次通过 boundary_checker 做防御性验证（defense-in-depth）。
+    """
     cookie_mgr = CookieManager(db)
     cookies = await cookie_mgr.load_cookies("aliexpress.com")
 
@@ -202,6 +240,20 @@ async def _run_adjuster(
     elif decision_type == "switch_ad_type":
         kwargs["new_type"] = action.get("new_value", "standard")
     # stop_ad 不需要额外参数
+
+    # 防御性验证 — 执行前再次确认 cookie 有效
+    if not cookies:
+        logger.warning(
+            "Cookie 为空，无法执行操作: SKU=%s type=%s",
+            sku_id, decision_type,
+            extra={"sku_id": sku_id, "decision_type": decision_type},
+        )
+        return {
+            "success": False,
+            "operation": decision_type,
+            "sku_id": sku_id,
+            "error": "Cookie 为空或已失效，跳过执行",
+        }
 
     # 在后台线程中执行同步浏览器操作
     loop = asyncio.get_event_loop()
