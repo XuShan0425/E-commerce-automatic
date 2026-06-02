@@ -27,10 +27,21 @@ interface UserInfo {
   created_at: string;
 }
 
+interface PlatformInfo {
+  type: string;
+  label: string;
+  enabled: boolean;
+  cookie_status: string;
+  last_sync_time: string | null;
+  extra: Record<string, any>;
+}
+
 export function Settings() {
   const { addToast, jwtToken, setJwtToken, username, setUsername, userRole, setUserRole } = useApp();
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
+  const [platforms, setPlatforms] = useState<PlatformInfo[]>([]);
+  const [platformsLoading, setPlatformsLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [logPanel, setLogPanel] = useState(false);
   const [logContent, setLogContent] = useState('');
@@ -66,7 +77,22 @@ export function Settings() {
     setLoading(false);
   }
 
+  // 加载平台管理列表
+  async function loadPlatforms() {
+    setPlatformsLoading(true);
+    try {
+      const p = await api.get<PlatformInfo[]>('/platforms');
+      setPlatforms(p);
+    } catch (e: any) {
+      // 平台 API 可能还未部署，静默忽略
+    }
+    setPlatformsLoading(false);
+  }
+
   useEffect(() => { load(); }, []);
+
+  // 加载平台列表
+  useEffect(() => { loadPlatforms(); }, []);
 
   // 加载用户列表（管理员可用）
   useEffect(() => {
@@ -257,6 +283,48 @@ export function Settings() {
       setLogContent(`获取日志失败: ${e.message}`);
     }
     setLogLoading(false);
+  }
+
+  // ── 平台管理操作 ──────────────────────────
+
+  async function handlePlatformLogin(platformType: string) {
+    try {
+      const r = await api.post<any>(`/platforms/${platformType}/login?headless=true`);
+      addToast(r.message || '登录完成', r.status === 'ok' ? 'success' : 'error');
+      loadPlatforms();
+    } catch (e: any) {
+      addToast(e.message || '登录失败', 'error');
+    }
+  }
+
+  async function handlePlatformToggle(platformType: string, enabled: boolean) {
+    try {
+      const r = await api.post<any>(`/platforms/${platformType}/toggle?enabled=${enabled}`);
+      addToast(r.message || '操作完成', r.status === 'ok' ? 'success' : 'error');
+      loadPlatforms();
+    } catch (e: any) {
+      addToast(e.message || '操作失败', 'error');
+    }
+  }
+
+  async function handlePlatformReconnect(platformType: string) {
+    try {
+      const r = await api.post<any>(`/platforms/${platformType}/reconnect`);
+      addToast(r.message || '重连完成', r.status === 'ok' ? 'success' : 'error');
+      loadPlatforms();
+    } catch (e: any) {
+      addToast(e.message || '重连失败', 'error');
+    }
+  }
+
+  function platformStatusBadge(status: string) {
+    switch (status) {
+      case 'connected': return <StatusBadge status="success" />;
+      case 'disconnected': return <StatusBadge status="info" />;
+      case 'error':
+      case 'expired': return <StatusBadge status="critical" />;
+      default: return <StatusBadge status="warning" />;
+    }
   }
 
   if (loading) return <div className="text-center py-12 text-gray-400">加载中...</div>;
@@ -482,6 +550,79 @@ export function Settings() {
             停止调度
           </button>
         </div>
+      </section>
+
+      {/* ── 平台管理选项卡 ── */}
+      <section className="bg-white rounded-lg shadow p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-base font-semibold text-gray-700">平台管理</h2>
+          {platformsLoading && <span className="text-xs text-gray-400">加载中...</span>}
+        </div>
+        {platforms.length === 0 ? (
+          <div className="text-center text-gray-400 text-sm py-4">
+            {platformsLoading ? '加载平台列表...' : '暂无已接入平台'}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {platforms.map(p => (
+              <div key={p.type} className="border rounded-lg p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-sm text-gray-800">{p.label}</span>
+                    {platformStatusBadge(p.cookie_status)}
+                    <span className="text-xs text-gray-500">
+                      {p.cookie_status === 'connected' ? '已连接'
+                        : p.cookie_status === 'disconnected' ? '未连接'
+                        : p.cookie_status === 'error' ? '错误'
+                        : p.cookie_status === 'expired' ? '已过期'
+                        : p.cookie_status}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <label className="flex items-center gap-1 text-xs text-gray-600">
+                      <input
+                        type="checkbox"
+                        checked={p.enabled}
+                        onChange={e => handlePlatformToggle(p.type, e.target.checked)}
+                        className="rounded"
+                      />
+                      启用
+                    </label>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2 text-xs">
+                  <button
+                    onClick={() => handlePlatformLogin(p.type)}
+                    disabled={p.cookie_status === 'connected'}
+                    className="px-2.5 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    登录
+                  </button>
+                  <button
+                    onClick={() => handlePlatformReconnect(p.type)}
+                    className="px-2.5 py-1 bg-gray-600 text-white rounded hover:bg-gray-700"
+                  >
+                    重新连接
+                  </button>
+                </div>
+                {p.last_sync_time && (
+                  <div className="mt-1.5 text-xs text-gray-400">
+                    上次同步: {new Date(p.last_sync_time).toLocaleString('zh-CN')}
+                  </div>
+                )}
+                {p.type === 'amazon' && (
+                  <div className="mt-2 p-2 bg-gray-50 rounded border text-xs text-gray-600">
+                    <span className="font-medium">Amazon 配置:</span>
+                    <ul className="mt-1 list-disc list-inside">
+                      <li>商城站点: {p.extra?.marketplace_id || 'US (ATVPDKIKX0DER)'}</li>
+                      <li>广告类型: Sponsored Products, Sponsored Brands</li>
+                    </ul>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </section>
 
       {/* ── API Key 管理 ── */}
