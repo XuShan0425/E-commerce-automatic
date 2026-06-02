@@ -3,79 +3,19 @@
 
 ---
 
-## ⚠️ 新会话启动协议（强制遵守）
+## 启动原则（Opus 只做脑力活）
 
-当你（Opus）接收到一个新需求时，**必须按以下顺序执行，不得跳过任何步骤，不得自行扫描代码库**。
+目标：**Opus 做思考/决策/沟通，Haiku 探索代码，Sonnet 写代码。**
+原则：**先读文档再规划，先探代码再决策，先给计划再动手。**
 
-### 步骤 1：读文档（你来做，Opus）
+| 任务类型 | 怎么做 | 示例 |
+|---------|-------|------|
+| 新需求/新功能 | 读 P0 文档（CLAUDE.md → ARCHITECTURE.md → AGENTS.md）→ 理解后直接与用户讨论方案 → 用 Haiku scout 验证细节 | "实现价格预警功能" |
+| 已有 TASK 执行 | 调 `smart-orchestrator scout` 做代码上下文扫描 → 基于报告制定执行计划 → 调 `smart-orchestrator execute` 让 Sonnet 实现 | "跑 TASK-004-1" |
+| 简单问题/快速排查 | 直接做，不用走流程 | "这个函数是干什么的" |
+| Git/GitHub 仓库操作 | 直接跑只读命令，不用读文档 | "检查 PR 状态"、"看下分支情况" |
 
-只读文档，不动代码。按优先级读：
-
-| 优先级 | 读什么 | 为什么 |
-|--------|--------|--------|
-| P0 | 当前文件 `CLAUDE.md` | 项目全局规范、边界条件 |
-| P0 | `docs/ARCHITECTURE.md` | 分层架构、模块依赖、禁止导入规则 |
-| P0 | `AGENTS.md` → Context Map | 根据需求查表找到对应模块的文档入口 |
-| P1 | `docs/exec-plans/active/` 下对应 EPIC | 如果需求涉及已有 EPIC |
-| P1 | `docs/PLANS.md` | EPIC/TASK 文件规范 |
-| P2 | `docs/PRODUCT_SENSE.md` | 产品原则（如果涉及 AI 决策逻辑） |
-| P2 | 其他 `docs/` 下的设计文档 | 按 Context Map 指引 |
-
-**禁止**：在读完全部 P0 文档之前，**不得调用 Glob、Grep、Read 读取任何 `.py` / `.tsx` / `.js` 等源代码文件**。
-
-### 步骤 2：Haiku 微验证（调用 Workflow，让 Haiku 做）
-
-你读完文档后，对项目状态有一定理解。但**不要自己去搜索代码验证**，而是调用 `smart-orchestrator` 的 scout 模式，让 Haiku 做：
-
-```
-Workflow({
-  name: 'smart-orchestrator',
-  args: {
-    mode: 'scout',
-    tasks: [{ id: 'TASK-XXX', file: '.codex-tasks/active/...', goal: '...', allowed_files: '...' }]
-  }
-})
-```
-
-Haiku scout 会：
-- 用 Glob / Grep / Read 搜索相关代码
-- 返回结构化报告（涉及文件、关键行号、代码现状、风险、未知点）
-- **你基于这份报告做分析和规划**
-
-**为什么这么做**：
-- Haiku 搜索代码比你（Opus）便宜 30 倍
-- Haiku 返回的结构化报告比你 grep 后自己读更精炼
-- 你的上下文留给分析和决策，不做脏活
-
-### 步骤 3：制定计划（你来做，Opus）
-
-基于 P0 文档 + Haiku scout 报告，制定精确执行计划：
-
-- 引用具体文件路径和行号（来自 scout 报告）
-- 列出每一步要改什么
-- 列出验收标准和验证命令
-- 📌 展示给用户确认后再执行
-
-### 步骤 4：Sonnet 执行（调用 Workflow，让 Sonnet 做）
-
-```
-Workflow({
-  name: 'smart-orchestrator',
-  args: { mode: 'execute', plans: [...] }
-})
-```
-
-### 禁止行为清单
-
-| ❌ 禁止 | 为什么 |
-|---------|--------|
-| 新会话直接 `Glob("**/*.py")` 或 `Glob("**/*")` | 全量扫描浪费上下文，且不精准 |
-| 新会话直接 `Grep("def", path="App/")` | 无目的搜索，不如先看架构文档 |
-| 读完文档后用 Read 逐行读代码文件验证 | 用 Haiku scout 代替，更便宜更结构化 |
-| 把 P0 文档跳过了直接写代码 | 必须读完 |
-| 需求不明确时直接动手 | 先问清楚，再用 scout |
-
----
+**关键约束（仅一条）**：大规模代码探索（跨 5+ 文件、不确定改哪）时优先用 `smart-orchestrator scout`（Haiku）做，不要 Opus 自己通篇搜索。小范围确认（1-2 个文件、验证 scout 报告准确性）Opus 可以直接 Read。
 
 ## 项目概述
 
