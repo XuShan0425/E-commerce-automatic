@@ -1,6 +1,11 @@
 """Pydantic schemas 导出."""
 
 from App.schemas.ad_snapshot import AdSnapshotCreate, AdSnapshotRead
+from App.schemas.affiliate import (
+    AffiliateCollectResponse,
+    AffiliateCommissionItem,
+    AffiliatePerformanceItem,
+)
 from App.schemas.alert import AlertRead
 from App.schemas.auth import ApiKeyCreate, ApiKeyRead, ApiKeyReveal
 from App.schemas.competitor import (
@@ -44,4 +49,7 @@ __all__ = [
     "CompetitorSnapshotRead",
     "CompetitorCompareItem",
     "CompetitorCompareResponse",
+    "AffiliateCommissionItem",
+    "AffiliatePerformanceItem",
+    "AffiliateCollectResponse",
 ]

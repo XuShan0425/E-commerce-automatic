@@ -5,6 +5,7 @@ const NAV = [
   { to: '/', label: '仪表盘', icon: '📊' },
   { to: '/products', label: '商品管理', icon: '📦' },
   { to: '/rates-settings', label: '费率设置', icon: '💰' },
+  { to: '/affiliate', label: '联盟营销', icon: '🔗' },
   { to: '/competitors', label: '竞品对比', icon: '🏷️' },
   { to: '/logs', label: '日志中心', icon: '📋' },
   { to: '/alerts', label: '警报中心', icon: '🔔' },
