@@ -43,91 +43,7 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
-# ── 重试策略 ──────────────────────────────────────
-
-@dataclass
-class RetryConfig:
-    """指数退避重试配置。"""
-    max_retries: int = 3
-    base_delay: float = 2.0
-    backoff_factor: float = 2.0
-
-
-class NonRetryableError(Exception):
-    """标记为不可重试的异常。"""
-    pass
-
-
-class CookieOrAuthError(NonRetryableError):
-    """Cookie 失效 / 登录失败"""
-    pass
-
-
-class BrowserCrashError(NonRetryableError):
-    """浏览器崩溃异常"""
-    pass
-
-
-_RETRYABLE_EXCEPTIONS: tuple[type[Exception], ...] = (
-    asyncio.TimeoutError,
-    TimeoutError,
-    ConnectionError,
-    ConnectionResetError,
-    ConnectionAbortedError,
-    ConnectionRefusedError,
-)
-
-
-def is_retryable(exc: Exception) -> bool:
-    if isinstance(exc, NonRetryableError):
-        return False
-    return isinstance(exc, _RETRYABLE_EXCEPTIONS)
-
-
-def is_http_5xx(exc: Exception) -> bool:
-    msg = str(exc).lower()
-    return any(f"5{x}" in msg for x in range(0, 10))
-
-
-def _calc_delay(attempt: int, config: RetryConfig) -> float:
-    return config.base_delay * (config.backoff_factor ** (attempt - 1))
-
-
-def with_retry(
-    fn: Callable[[], Any],
-    config: RetryConfig | None = None,
-    context: str = "",
-) -> Any:
-    cfg = config or RetryConfig()
-    last_exc: Exception | None = None
-
-    for attempt in range(1, cfg.max_retries + 2):
-        try:
-            return fn()
-        except Exception as exc:
-            last_exc = exc
-            if _looks_like_page_crash(exc):
-                raise BrowserCrashError(str(exc)) from exc
-            if not is_retryable(exc) and not is_http_5xx(exc):
-                raise
-            if attempt > cfg.max_retries:
-                logger.error("retry_exhausted", extra={"context": context, "attempt": attempt - 1, "max_retries": cfg.max_retries, "exception_type": type(exc).__name__, "error": str(exc)})
-                raise
-            delay = _calc_delay(attempt, cfg)
-            logger.warn("retry_attempt", extra={"context": context, "attempt": attempt, "max_retries": cfg.max_retries, "next_delay_seconds": delay, "exception_type": type(exc).__name__, "error": str(exc)})
-            time.sleep(delay)
-
-    assert last_exc is not None
-    raise last_exc
-
-
-_PAGE_CRASH_KEYWORDS = ["page.crashed", "page.worker_terminated", "target closed", "browser has been disconnected", "protocol error", "crash"]
-
-
-def _looks_like_page_crash(exc: Exception) -> bool:
-    msg = str(exc).lower()
-    return any(kw in msg for kw in _PAGE_CRASH_KEYWORDS)
-
+# ── 速卖通卖家中心页面 (2026-05-31 实测) ────────
 # ── 速卖通卖家中心页面 (2026-05-31 实测) ────────
 # 旧域名 gsp.aliexpress.com 已废弃，新架构统一用 csp.aliexpress.com
 # ad.aliexpress.com 需独立登录且返回空页面 — 改用 CSP 内部推广入口
@@ -258,6 +174,39 @@ def _run_collection_sync(
     return result
 
 
+def _check_price_consistency(price_data: list[CollectedPriceData]) -> list[dict]:
+    """检查同一 SKU 的多来源价格是否一致。
+
+    同一 SKU 不同 API 来源的价格差异超过 5% 时记录警告。
+
+    Returns:
+        list of warning dicts (含 sku_id, price, avg_price, source_url)。
+    """
+    warnings: list[dict] = []
+    prices_by_sku: dict[str, list[tuple[str, float]]] = {}
+    for p in price_data:
+        if not p.sku_id or p.current_price <= 0:
+            continue
+        if p.sku_id not in prices_by_sku:
+            prices_by_sku[p.sku_id] = []
+        prices_by_sku[p.sku_id].append((p.source_url, p.current_price))
+
+    for sku_id, sources in prices_by_sku.items():
+        if len(sources) < 2:
+            continue
+        prices = [s[1] for s in sources]
+        avg = sum(prices) / len(prices)
+        for source_url, p in sources:
+            if avg > 0 and abs(p - avg) / avg > 0.05:
+                warnings.append({
+                    "sku_id": sku_id,
+                    "price": p,
+                    "avg_price": round(avg, 2),
+                    "source_url": source_url,
+                })
+    return warnings
+
+
 async def collect_ad_data(
     db: AsyncSession,
     cookie_manager: CookieManager,
@@ -311,7 +260,24 @@ async def collect_ad_data(
     saved_prices = 0
     saved_competitors = 0
     now = datetime.now(UTC)
+    price_data = raw.get("price_data", [])
 
+    # 价格一致性校验：同一 SKU 多来源价格差异超过 5% 时记日志
+    consistency_warnings = _check_price_consistency(
+        [p for p in price_data if isinstance(p, CollectedPriceData)]
+    )
+    for w in consistency_warnings:
+        logger.warn(
+            "price_inconsistency",
+            extra={
+                "sku_id": w["sku_id"],
+                "price": w["price"],
+                "avg_price": w["avg_price"],
+                "source_url": w["source_url"],
+            },
+        )
+
+    # 写入广告快照
     for ad in raw.get("ad_data", []):
         if not isinstance(ad, CollectedAdData):
             continue
@@ -333,37 +299,55 @@ async def collect_ad_data(
         db.add(snapshot)
         saved_ads += 1
 
-    for price in raw.get("price_data", []):
-        if not isinstance(price, CollectedPriceData):
-            continue
-        if not price.sku_id or price.current_price <= 0:
-            continue
-        snapshot = PriceSnapshot(
-            sku_id=price.sku_id,
-            snapshot_time=now,
-            current_price=price.current_price,
-        )
-        db.add(snapshot)
-        saved_prices += 1
+    # 写入价格快照（独立 try/except，不阻断主流程）
+    try:
+        for price in price_data:
+            if not isinstance(price, CollectedPriceData):
+                continue
+            if not price.sku_id or price.current_price <= 0:
+                continue
+            snapshot = PriceSnapshot(
+                sku_id=price.sku_id,
+                snapshot_time=now,
+                current_price=price.current_price,
+            )
+            db.add(snapshot)
+            saved_prices += 1
 
-    for comp in raw.get("competitor_data", []):
-        if not isinstance(comp, CollectedCompetitorData):
-            continue
-        if not comp.sku_id:
-            continue
-        snapshot = CompetitorSnapshot(
-            sku_id=comp.sku_id,
-            name=comp.name,
-            price=comp.price,
-            rating=comp.rating,
-            sales=comp.sales,
-            snapshot_time=now,
-            source_sku_id=comp.source_sku_id,
-        )
-        db.add(snapshot)
-        saved_competitors += 1
 
-    await db.flush()
+        for comp in raw.get("competitor_data", []):
+            if not isinstance(comp, CollectedCompetitorData):
+                continue
+            if not comp.sku_id:
+                continue
+            snapshot = CompetitorSnapshot(
+                sku_id=comp.sku_id,
+                name=comp.name,
+                price=comp.price,
+                rating=comp.rating,
+                sales=comp.sales,
+                snapshot_time=now,
+                source_sku_id=comp.source_sku_id,
+            )
+            db.add(snapshot)
+            saved_competitors += 1
+
+        await db.flush()
+    except Exception as exc:
+        logger.error(
+            "price_snapshot_write_failed",
+            extra={"error": str(exc), "price_count": len(price_data)},
+        )
+
+    # 如果本次采集没有任何价格记录，记录警告（不影响成功状态）
+    if saved_prices == 0:
+        logger.warn(
+            "no_price_snapshots_collected",
+            extra={
+                "ad_count": saved_ads,
+                "total_responses": raw.get("total_responses", 0),
+            },
+        )
 
     return {
         "success": True,
