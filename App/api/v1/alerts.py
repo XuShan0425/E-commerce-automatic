@@ -7,7 +7,9 @@ from App.core.database import get_db
 from App.core.security import verify_api_key
 from App.schemas.alert import AlertRead
 from App.services.alert_service import (
-    clear_global_stop, get_active_alerts, raise_alert, resolve_alert,
+    clear_global_stop,
+    get_active_alerts,
+    resolve_alert,
 )
 from App.services.email_notifier import send_test_email
 
