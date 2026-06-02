@@ -5,16 +5,16 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from App.core.logging import get_logger
-
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from App.core.logging import get_logger
 from App.models.operation_log import OperationLog
-from App.services.operation_logger import log_operation, update_log_status
-from App.services.alert_service import raise_alert
 from App.services.adjuster import run_executor
+from App.services.alert_service import raise_alert
+from App.services.boundary_checker import generate_closure_report
 from App.services.browser import BrowserService
 from App.services.cookie_manager import CookieManager
+from App.services.operation_logger import log_operation, update_log_status
 
 logger = get_logger(__name__)
 
@@ -93,6 +93,15 @@ async def execute_decision(
 
         # ── 软边界：待人工确认 ─────────────────────
         if boundary_type == "soft":
+            # 生成关闭说明报告（如果是 stop_ad 类型）
+            closure_report = None
+            if decision_type == "stop_ad":
+                closure_report = await generate_closure_report(
+                    db, sku_id, decision,
+                    profit=analysis_result.get("profit"),
+                    snapshots_7d=analysis_result.get("snapshots_7d"),
+                )
+
             log = await log_operation(
                 db, sku_id, decision_type,
                 field_name=action.get("field"),
@@ -106,6 +115,7 @@ async def execute_decision(
                     "reason": reason_text,
                     "decision": decision,
                     "profit": profit,
+                    "closure_report": closure_report,
                 },
             )
             await raise_alert(
