@@ -21,6 +21,7 @@ from App.models.product_analytics import (
     TrafficSource,
 )
 from App.models.product_import import ProductSku
+from App.models.report import Report
 from App.models.system_state import SystemState
 
 __all__ = [
@@ -36,6 +37,7 @@ __all__ = [
     "ProfitAnalysis",
     "CompetitorSnapshot",
     "ProductSku",
+    "Report",
     "CoreMetric",
     "TrafficSource",
     "KeywordData",
