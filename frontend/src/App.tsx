@@ -5,6 +5,7 @@ import { Dashboard } from './pages/Dashboard';
 import { Products } from './pages/Products';
 import { Logs } from './pages/Logs';
 import { Alerts } from './pages/Alerts';
+import { Backup } from './pages/Backup';
 import { Settings } from './pages/Settings';
 import { RatesSettings } from './pages/RatesSettings';
 import { Reports } from './pages/Reports';
@@ -19,6 +20,7 @@ export function App() {
             <Route path="/products" element={<Products />} />
             <Route path="/logs" element={<Logs />} />
             <Route path="/alerts" element={<Alerts />} />
+            <Route path="/backups" element={<Backup />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/rates-settings" element={<RatesSettings />} />
             <Route path="/reports" element={<Reports />} />
