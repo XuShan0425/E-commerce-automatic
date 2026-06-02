@@ -36,6 +36,8 @@ export function Settings() {
   const [logContent, setLogContent] = useState('');
   const [logLoading, setLogLoading] = useState(false);
   const [restarting, setRestarting] = useState(false);
+  const [schedulerInterval, setSchedulerInterval] = useState(30);
+  const [globalStopToggling, setGlobalStopToggling] = useState(false);
 
   // 用户管理状态
   const [users, setUsers] = useState<UserInfo[]>([]);
@@ -68,20 +70,18 @@ export function Settings() {
 
   useEffect(() => { load(); }, []);
 
-  // 加载用户列表（管理员可用）
-  useEffect(() => {
-    if (userRole === 'admin') {
-      loadUsers();
-    }
-  }, [userRole]);
-
-  async function loadUsers() {
+  async function handleGlobalStopToggle() {
+    if (!status) return;
+    const newVal = !status.global_stop;
+    setGlobalStopToggling(true);
     try {
-      const u = await api.get<UserInfo[]>('/auth/users');
-      setUsers(u);
-    } catch {
-      // 非 admin 可能 403，忽略
+      await api.post('/system/global-stop', { enabled: newVal });
+      addToast(newVal ? '全局停止已启用' : '全局停止已清除', 'success');
+      load();
+    } catch (e: any) {
+      addToast(e.message, 'error');
     }
+    setGlobalStopToggling(false);
   }
 
   async function handleLogin() {
@@ -124,28 +124,13 @@ export function Settings() {
     if (!regUsername.trim() || !regPassword.trim()) return;
     setRegLoading(true);
     try {
-      const res = await fetch('/api/v1/auth/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(jwtToken ? { 'Authorization': `Bearer ${jwtToken}` } : {}),
-        },
-        body: JSON.stringify({
-          username: regUsername.trim(),
-          password: regPassword,
-          role: regRole,
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: '注册失败' }));
-        addToast(err.detail || '注册失败', 'error');
-        return;
+      if (action === 'start') {
+        await api.post(`/scheduler/start?interval_minutes=${schedulerInterval}`);
+      } else {
+        await api.post(`/scheduler/${action}`);
       }
-      addToast(`用户 ${regUsername} 创建成功`, 'success');
-      setShowRegisterForm(false);
-      setRegUsername('');
-      setRegPassword('');
-      loadUsers();
+      addToast(action === 'start' ? `调度已启动 (间隔 ${schedulerInterval} 分钟)` : '调度已停止', 'success');
+      load();
     } catch (e: any) {
       addToast(e.message || '网络错误', 'error');
     } finally {
@@ -425,6 +410,17 @@ export function Settings() {
           <div>
             <span className="text-gray-400">全局停止:</span>{' '}
             <StatusBadge status={status?.global_stop ? 'critical' : 'success'} />
+            <button
+              onClick={handleGlobalStopToggle}
+              disabled={globalStopToggling}
+              className={`ml-2 px-2 py-0.5 text-xs rounded border transition-colors ${
+                status?.global_stop
+                  ? 'bg-green-50 text-green-700 border-green-300 hover:bg-green-100'
+                  : 'bg-red-50 text-red-700 border-red-300 hover:bg-red-100'
+              } disabled:opacity-50`}
+            >
+              {globalStopToggling ? '处理中...' : status?.global_stop ? '清除' : '启用'}
+            </button>
           </div>
           <div>
             <span className="text-gray-400">API Keys:</span>{' '}
@@ -474,7 +470,16 @@ export function Settings() {
             查看日志
           </button>
         </div>
-        <div className="flex gap-2 mt-2">
+        <div className="flex gap-2 mt-2 items-center">
+          <label className="text-xs text-gray-500 mr-1">间隔(分钟):</label>
+          <input
+            type="number"
+            min={5}
+            max={1440}
+            value={schedulerInterval}
+            onChange={e => setSchedulerInterval(parseInt(e.target.value) || 30)}
+            className="w-16 px-2 py-1 border border-gray-300 rounded text-sm text-center"
+          />
           <button onClick={() => handleScheduler('start')} className="px-3 py-1.5 bg-green-100 text-green-700 rounded text-sm hover:bg-green-200">
             启动调度
           </button>
