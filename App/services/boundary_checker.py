@@ -163,8 +163,8 @@ async def check_boundaries(
 
     # ── 通过 ──────────────────────────────────────
     if not reasons:
-        logger.info("边界检查通过: SKU=%s decision=%s", sku_id, decision_type)
+        logger.info(f"边界检查通过: SKU={sku_id} decision={decision_type}")
         return BoundaryResult(passed=True)
 
-    logger.warning("边界检查未通过: SKU=%s reason=%s", sku_id, "; ".join(reasons))
+    logger.warning(f"边界检查未通过: SKU={sku_id} reason={'; '.join(reasons)}")
     return BoundaryResult(passed=False, reason="; ".join(reasons), details=details)
