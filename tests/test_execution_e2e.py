@@ -8,28 +8,27 @@
 
 from __future__ import annotations
 
-import pytest
+from datetime import UTC, datetime
 from unittest import mock
-from datetime import datetime, timezone
-from typing import Any
+
+import pytest
+
+from App.models.operation_log import OperationLog
+from App.services.analysis_pipeline import analyze_single_sku
 
 # ── 被测试模块 ──────────────────────────────────────
 from App.services.execution_engine import (
-    execute_decision,
-    execute_all_passed,
     confirm_pending,
+    execute_all_passed,
+    execute_decision,
     reject_pending,
 )
 from App.services.operation_logger import (
+    get_logs,
+    get_pending_operations,
     log_operation,
     update_log_status,
-    get_pending_operations,
-    get_logs,
 )
-from App.services.analysis_pipeline import analyze_single_sku
-
-from App.models.operation_log import OperationLog
-
 
 # ═══════════════════════════════════════════════════════
 #  Fixtures
@@ -63,7 +62,7 @@ def mock_op_log():
     log.ai_confidence = 0.82
     log.ai_reasoning = "近 7 天点击率上升 12%，建议小幅提升预算"
     log.status = "success"
-    log.executed_at = datetime.now(timezone.utc)
+    log.executed_at = datetime.now(UTC)
     log.details = {}
     return log
 
