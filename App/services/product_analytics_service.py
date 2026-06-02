@@ -553,6 +553,160 @@ def _extract_rows_from_list(lst: list) -> list[dict]:
     return result
 
 
+# ── CSP 导出公共 API（供 data_collector 调用） ─────
+
+# 列名映射：SYCM 核心指标导出中文列名 -> AdSnapshot 字段
+CORE_EXPORT_COLUMN_MAP: dict[str, str] = {
+    "展现量": "impressions",
+    "展现": "impressions",
+    "曝光量": "impressions",
+    "曝光": "impressions",
+    "点击量": "clicks",
+    "点击": "clicks",
+    "点击率": "ctr",
+    "订单量": "orders",
+    "订单": "orders",
+    "转化率": "conversion_rate",
+    "花费": "ad_spend",
+    "消耗": "ad_spend",
+    "广告花费": "ad_spend",
+    "商品点击花费": "ad_spend",
+    "推广花费": "ad_spend",
+    "销售额": "revenue",
+    "收入": "revenue",
+    "成交金额": "revenue",
+    "商品ID": "sku_id",
+    "商品id": "sku_id",
+    "productId": "sku_id",
+    "product_id": "sku_id",
+    "日期": "stat_date",
+    "广告类型": "ad_type",
+    "推广类型": "ad_type",
+}
+
+TRAFFIC_EXPORT_COLUMN_MAP: dict[str, str] = {
+    "来源": "source_name",
+    "来源名称": "source_name",
+    "访客数": "visitors",
+    "浏览量": "page_views",
+    "点击量": "clicks",
+    "花费": "ad_spend",
+    "广告花费": "ad_spend",
+    "推广花费": "ad_spend",
+    "订单量": "orders",
+    "转化率": "conversion_rate",
+    "成交金额": "revenue",
+    "销售额": "revenue",
+    "商品点击花费": "ad_spend",
+}
+
+
+def export_product_ad_data_sync(
+    page,
+    product_id: str,
+) -> list[dict]:
+    """导航到 SYCM 单品分析详情页 → 导出核心指标数据 → 解析 XLSX 为记录。
+
+    Returns:
+        list[dict]: 每行一条记录，key 为中文列名，value 为各列数据。
+    """
+    if not _navigate_to_detail(page, product_id):
+        logger.warning("export_product_ad_data_sync: 无法进入单品分析详情页 (product_id=%s)", product_id)
+        return []
+
+    # 点击核心指标 Tab
+    if not _click_tab(page, "核心指标"):
+        logger.warning("export_product_ad_data_sync: 无法点击核心指标 Tab")
+        return []
+
+    time.sleep(_random_delay(2000, 4000))
+
+    config = TAB_CONFIGS["core"]
+    records = _try_export_download(page, config, product_id)
+    if not records:
+        # 回退：尝试从流量来源 Tab 获取含花费的数据
+        logger.info("核心指标无导出数据，尝试流量来源 Tab")
+        time.sleep(_random_delay(1000, 2000))
+        if _click_tab(page, "流量"):
+            time.sleep(_random_delay(2000, 4000))
+            traffic_config = TAB_CONFIGS["traffic"]
+            records = _try_export_download(page, traffic_config, product_id)
+
+    return records
+
+
+def map_export_records_to_ad_snapshot(
+    records: list[dict],
+    sku_id: str,
+    column_map: dict[str, str] | None = None,
+) -> list[dict]:
+    """将 SYCM 导出的原始记录映射为 AdSnapshot 兼容的 dict。
+
+    Args:
+        records: export_product_ad_data_sync 返回的原始记录列表。
+        sku_id: 当前 SKU 的商品 ID。
+        column_map: 列名映射字典，默认使用 CORE_EXPORT_COLUMN_MAP。
+
+    Returns:
+        list[dict]: 每条包含 AdSnapshot 字段（impressions, clicks, ctr 等）。
+    """
+    if not records:
+        return []
+
+    if column_map is None:
+        column_map = CORE_EXPORT_COLUMN_MAP
+
+    results: list[dict] = []
+    for row in records:
+        snapshot: dict = {
+            "sku_id": sku_id,
+            "impressions": 0,
+            "clicks": 0,
+            "ctr": 0.0,
+            "orders": 0,
+            "conversion_rate": 0.0,
+            "ad_spend": 0.0,
+            "revenue": 0.0,
+            "ad_type": "standard",
+        }
+
+        for chinese_col, value in row.items():
+            chinese_clean = chinese_col.strip()
+            field = column_map.get(chinese_clean)
+            if field is None:
+                continue
+
+            if field in ("impressions", "clicks", "orders"):
+                try:
+                    snapshot[field] = int(float(str(value).replace(",", "")))
+                except (ValueError, TypeError):
+                    pass
+            elif field in ("ctr", "conversion_rate"):
+                # 处理百分比格式: "12.34%" -> 0.1234
+                try:
+                    raw = str(value).replace("%", "").replace(",", "").strip()
+                    val = float(raw)
+                    if "百分比" in chinese_clean or "%" in str(value) or val > 1:
+                        val = val / 100.0
+                    snapshot[field] = val
+                except (ValueError, TypeError):
+                    pass
+            elif field in ("ad_spend", "revenue"):
+                try:
+                    snapshot[field] = float(str(value).replace(",", "").replace("$", ""))
+                except (ValueError, TypeError):
+                    pass
+            elif field in ("stat_date",):
+                if value:
+                    snapshot["stat_date"] = str(value).strip()
+
+        # 至少要有一些关键字段才算有效
+        if snapshot["impressions"] > 0 or snapshot["clicks"] > 0 or snapshot["ad_spend"] > 0:
+            results.append(snapshot)
+
+    return results
+
+
 # ── 异步入口 ──────────────────────────────────────
 
 async def collect_product_analytics(
