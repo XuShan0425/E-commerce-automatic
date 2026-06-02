@@ -13,6 +13,7 @@ from App.schemas.rates import (
     PlatformFeeBase,
     PlatformFeeRead,
 )
+from App.schemas.report import ReportListItem, ReportRead
 from App.schemas.system_state import SystemStateRead, SystemStatus
 
 __all__ = [
@@ -25,6 +26,8 @@ __all__ = [
     "PriceSnapshotRead",
     "ProfitAnalysisBase",
     "ProfitAnalysisRead",
+    "ReportListItem",
+    "ReportRead",
     "LogisticsRateBase",
     "LogisticsRateRead",
     "PlatformFeeBase",

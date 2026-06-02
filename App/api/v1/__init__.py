@@ -14,6 +14,7 @@ from App.api.v1.platform_fees import router as platform_fees_router
 from App.api.v1.products import router as products_router
 from App.api.v1.store_products import router as store_products_router
 from App.api.v1.rate_parsing import router as rate_parsing_router
+from App.api.v1.reports import router as reports_router
 from App.api.v1.scheduler_api import router as scheduler_router
 from App.api.v1.system import router as system_router
 
@@ -31,4 +32,5 @@ router.include_router(logistics_rates_router, tags=["logistics-rates"])
 router.include_router(platform_fees_router, tags=["platform-fees"])
 router.include_router(rate_parsing_router, tags=["rates"])
 router.include_router(analysis_router, tags=["analysis"])
+router.include_router(reports_router, tags=["reports"])
 router.include_router(execution_router, tags=["execution"])
