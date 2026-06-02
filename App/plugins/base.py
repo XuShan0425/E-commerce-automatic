@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import abc
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -109,3 +109,26 @@ class PluginBase(abc.ABC):
         if not self._started:
             return {"status": "degraded", "reason": "not_started"}
         return {"status": "healthy"}
+
+    # ── 广告决策接口（可选，用于广告策略插件）──────────
+
+    async def process(
+        self,
+        db: Any,
+        sku_id: str,
+        context: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """处理广告决策（可选方法，默认不处理）。
+
+        广告策略插件应覆盖此方法。
+        返回 None 表示本插件不适用于当前 SKU。
+
+        Args:
+            db: 数据库会话
+            sku_id: 商品 SKU ID
+            context: 分析上下文，包含 profit, snapshots_7d, product 等
+
+        Returns:
+            Decision dict（形式同 decision_engine 输出）或 None
+        """
+        return None

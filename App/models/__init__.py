@@ -1,5 +1,13 @@
 """全部模型导出."""
 
+from App.models.ads_expert import (
+    AIRecommendation,
+    BidHistory,
+    CampaignStrategy,
+    InspectionReport,
+    KeywordPerformance,
+    PromotionScore,
+)
 from App.models.alert import Alert
 from App.models.auth import ApiKey, User
 from App.models.base import (
@@ -25,8 +33,11 @@ from App.models.report import Report
 from App.models.system_state import SystemState
 
 __all__ = [
+    "AIRecommendation",
     "Alert",
     "ApiKey",
+    "BidHistory",
+    "CampaignStrategy",
     "CookieStore",
     "SystemState",
     "Product",
@@ -36,6 +47,9 @@ __all__ = [
     "PriceSnapshot",
     "ProfitAnalysis",
     "CompetitorSnapshot",
+    "PromotionScore",
+    "KeywordPerformance",
+    "InspectionReport",
     "ProductSku",
     "Report",
     "CoreMetric",

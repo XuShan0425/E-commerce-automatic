@@ -1,4 +1,7 @@
-"""分析管线 — 串联 profit_calculator → decision_engine → boundary_checker → roi_forecaster + dashboard 聚合查询."""
+"""分析管线 — profit_calculator → decision_engine → boundary_checker.
+
+新升级: 集成推广评分引擎、巡检引擎、广告专家 Agent，不破坏现有流程.
+"""
 
 from __future__ import annotations
 
@@ -18,12 +21,15 @@ from App.services.analysis_monitor import get_metrics
 from App.services.boundary_checker import check_boundaries
 from App.services.decision_engine import generate_decision
 from App.services.feedback_service import get_decision_history
+from App.services.inspection_engine import inspect_single_sku
+from App.services.keyword_match_engine import evaluate_keyword_match
 from App.services.profit_calculator import (
     _get_ad_snapshots_7d,
     _get_platform_fee_rate,
     _get_product,
     compute_profit,
 )
+from App.services.promotion_score_engine import compute_promotion_score
 from App.services.roi_forecaster import forecast_roi
 
 logger = get_logger(__name__)
@@ -186,6 +192,42 @@ async def analyze_single_sku(
         }
         logger.exception("边界检查异常", extra={"sku_id": sku_id})
 
+    # ── Step 4: 推广评分（补充数据，不阻塞主流程）───
+    if product and product.name:
+        try:
+            sample_keywords = product.name.split()[:3]
+            if sample_keywords:
+                kw = " ".join(sample_keywords)
+                promo = await compute_promotion_score(db, sku_id, kw, persist=True)
+                result["promotion_score"] = promo
+        except Exception as exc:
+            logger.debug("推广评分计算跳过 (sku=%s): %s", sku_id, exc)
+
+    # ── Step 5: 巡检（补充数据，不阻塞主流程）─────────
+    try:
+        breakeven = float(profit.breakeven_ad_spend) if profit else None
+        inspection = await inspect_single_sku(
+            db, sku_id, breakeven_ad_spend=breakeven, persist=True
+        )
+        result["inspection_findings"] = inspection
+    except Exception as exc:
+        logger.debug("巡检跳过 (sku=%s): %s", sku_id, exc)
+
+    # ── Step 6: 关键词适配度（补充数据，不阻塞主流程）─
+    if product and product.name:
+        try:
+            sample_keywords = product.name.split()[:5]
+            if sample_keywords:
+                kw = " ".join(sample_keywords)
+                kw_result = await evaluate_keyword_match(
+                    db, sku_id, kw,
+                    title=product.name,
+                    category=product.category,
+                )
+                result["keyword_matches"] = kw_result
+        except Exception as exc:
+            logger.debug("关键词适配度计算跳过 (sku=%s): %s", sku_id, exc)
+
     result["success"] = True
     decision_type = (
         result["decision"].get("decision_type", "?")
@@ -288,6 +330,32 @@ async def analyze_all_skus(
             "boundary_passed": passed_count,
             "decisions": ai_decisions,
         },
+    }
+
+
+async def analyze_all_skus_with_briefing(
+    db: AsyncSession,
+    *,
+    skip_ai: bool = False,
+) -> dict[str, Any]:
+    """分析所有 SKU 并附加每日运营简报（供 API/调度器调用）。
+
+    等价于 analyze_all_skus() + ad_expert_agent.generate_daily_briefing().
+    """
+    from App.services.ad_expert_agent import generate_daily_briefing
+
+    analysis = await analyze_all_skus(db, skip_ai=skip_ai)
+    briefing = None
+    try:
+        briefing = await generate_daily_briefing(db, use_llm=False)
+    except Exception as exc:
+        logger.warning("运营简报生成跳过: %s", exc)
+
+    return {
+        "pipeline": "ads_expert_v1",
+        "completed_at": datetime.now(UTC).isoformat(),
+        "analysis": analysis,
+        "briefing": briefing,
     }
 
 
@@ -425,3 +493,5 @@ async def get_dashboard_aggregate(db: AsyncSession) -> dict[str, Any]:
         "alert_count": alert_count,
         "roi_trend_7d": roi_trend_7d,
     }
+
+
