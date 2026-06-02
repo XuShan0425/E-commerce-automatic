@@ -12,6 +12,7 @@ const Settings = lazy(() => import('./pages/Settings'));
 const RatesSettings = lazy(() => import('./pages/RatesSettings'));
 const Reports = lazy(() => import('./pages/Reports'));
 const ABTesting = lazy(() => import('./pages/ABTesting'));
+const ExportPage = lazy(() => import('./pages/Export'));
 
 function PageLoading() {
   return (
@@ -36,6 +37,7 @@ export function App() {
               <Route path="/rates-settings" element={<RatesSettings />} />
               <Route path="/reports" element={<Reports />} />
               <Route path="/ab-testing" element={<ABTesting />} />
+              <Route path="/export" element={<ExportPage />} />
             </Routes>
           </Suspense>
         </Layout>
