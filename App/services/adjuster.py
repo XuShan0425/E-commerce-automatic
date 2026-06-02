@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import random
+from typing import TYPE_CHECKING, Any
 
 from App.core.logging import get_logger
-from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from App.services.browser import BrowserService
@@ -16,7 +15,9 @@ logger = get_logger(__name__)
 # ── 速卖通后台页面 URL (2026-05-31 实测) ────────
 # CSP 使用内部 SPA 路由，非独立域名
 PRODUCT_MANAGE_URL = "https://csp.aliexpress.com/m_apps/productManage/list-manage?channelId=363432"
-AD_MANAGE_URL = "https://csp.aliexpress.com/m_apps/p4p-pages/home?p4p_enter_from=sidebar"  # 站内推广(P4P)
+AD_MANAGE_URL = (
+    "https://csp.aliexpress.com/m_apps/p4p-pages/home?p4p_enter_from=sidebar"
+)  # 站内推广(P4P)
 AD_ALL_IN_ONE_URL = "https://csp.aliexpress.com/m_apps/all-in-one-promotion/home"  # 一站式推广
 CSP_HOME_URL = "https://csp.aliexpress.com/"
 
@@ -70,7 +71,7 @@ SELECTORS: dict[str, list[str]] = {
         "button:has-text('取消')",
         ".ait-btn:has-text('取消')",
     ],
-    # ── 广告管理页 (待实测验证) ─────────────
+    # ── 广告管理页 (基于 2026-06-02 CSP 侦察确认 AIT 组件) ─
     "ad_campaign_row": [
         "[data-row-key]",
         "[class*=\"campaign\"]",
@@ -124,8 +125,13 @@ def _page_ready(page, timeout: int = 15_000) -> bool:
         return False
 
 
-def _safe_click(page, selectors: list[str], timeout: int = 10_000) -> bool:
-    """安全点击：尝试多个选择器，第一个成功即返回。"""
+def _safe_click(
+    page, selectors: list[str], timeout: int = 10_000, group_name: str | None = None
+) -> bool:
+    """安全点击：尝试多个选择器，第一个成功即返回。
+
+    全部失败时记录 WARNING 日志提示页面结构变更。
+    """
     for selector in selectors:
         try:
             page.wait_for_selector(selector, state="visible", timeout=timeout)
@@ -136,11 +142,21 @@ def _safe_click(page, selectors: list[str], timeout: int = 10_000) -> bool:
             return True
         except Exception:
             continue
+    label = group_name or "unknown"
+    logger.warning(
+        "选择器全部失败，疑似速卖通页面结构变更: group=%s selectors=%s",
+        label, selectors,
+    )
     return False
 
 
-def _safe_fill(page, selectors: list[str], value: str, timeout: int = 10_000) -> bool:
-    """安全填充：尝试多个选择器，第一个成功即返回。"""
+def _safe_fill(
+    page, selectors: list[str], value: str, timeout: int = 10_000, group_name: str | None = None
+) -> bool:
+    """安全填充：尝试多个选择器，第一个成功即返回。
+
+    全部失败时记录 WARNING 日志提示页面结构变更。
+    """
     for selector in selectors:
         try:
             page.wait_for_selector(selector, state="visible", timeout=timeout)
@@ -154,6 +170,11 @@ def _safe_fill(page, selectors: list[str], value: str, timeout: int = 10_000) ->
             return True
         except Exception:
             continue
+    label = group_name or "unknown"
+    logger.warning(
+        "选择器全部失败，疑似速卖通页面结构变更: group=%s selectors=%s",
+        label, selectors,
+    )
     return False
 
 
@@ -187,13 +208,13 @@ def execute_adjust_bid(
 
         # 找到预算输入框（多级 fallback）
         budget_selectors = SELECTORS["budget_input"]
-        if not _safe_fill(page, budget_selectors, str(new_budget)):
+        if not _safe_fill(page, budget_selectors, str(new_budget), group_name="budget_input"):
             result["error"] = "无法找到预算输入框"
             return result
 
         # 保存
         save_selectors = SELECTORS["save_btn"]
-        if _safe_click(page, save_selectors):
+        if _safe_click(page, save_selectors, group_name="save_btn"):
             page.wait_for_timeout(2_000)
             # 检查成功提示
             try:
@@ -248,12 +269,12 @@ def execute_adjust_price(
 
         # 找到价格输入框（多级 fallback）
         price_selectors = SELECTORS["price_input"]
-        if not _safe_fill(page, price_selectors, f"{new_price:.2f}"):
+        if not _safe_fill(page, price_selectors, f"{new_price:.2f}", group_name="price_input"):
             result["error"] = "无法找到价格输入框"
             return result
 
         # 保存
-        if _safe_click(page, SELECTORS["save_btn"]):
+        if _safe_click(page, SELECTORS["save_btn"], group_name="save_btn"):
             page.wait_for_timeout(2_000)
             try:
                 page.wait_for_selector(SELECTORS["success_toast"], timeout=5_000)
@@ -304,13 +325,13 @@ def execute_stop_ad(
         if _safe_click(page, SELECTORS["stop_campaign_btn"] + [
             "[aria-label*='pause' i]",
             ".campaign-action-pause",
-        ]):
+        ], group_name="stop_campaign_btn"):
             page.wait_for_timeout(1_000)
             # 确认弹窗
             try:
                 confirm_el = page.wait_for_selector(SELECTORS["confirm_btn"], timeout=3_000)
                 if confirm_el:
-                    _safe_click(page, [SELECTORS["confirm_btn"]])
+                    _safe_click(page, [SELECTORS["confirm_btn"]], group_name="confirm_btn")
             except Exception:
                 logger.debug("confirm dialog not found in stop_ad")
             page.wait_for_timeout(2_000)
@@ -370,11 +391,15 @@ def execute_switch_ad_type(
             except Exception:
                 continue
         if not selected:
+            logger.warning(
+                "选择器全部失败，疑似速卖通页面结构变更: group=ad_type_selector selectors=%s",
+                type_selectors,
+            )
             result["error"] = "无法找到广告类型选择器"
             return result
 
         # 保存
-        _safe_click(page, SELECTORS["save_btn"])
+        _safe_click(page, SELECTORS["save_btn"], group_name="save_btn")
         page.wait_for_timeout(2_000)
         result["success"] = True
 
