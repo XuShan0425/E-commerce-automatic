@@ -730,7 +730,6 @@ async def check_boundaries(
             cookie_reason,
             extra={"sku_id": sku_id, "boundary_type": "hard", "cookie_status": cookie_reason},
         )
-        )
         return BoundaryResult(
             passed=False,
             boundary_type="hard",

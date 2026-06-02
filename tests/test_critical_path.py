@@ -281,12 +281,19 @@ async def test_boundary_checker_passes_healthy_sku() -> None:
         return_value=False,
     ):
         mock_db = mock.AsyncMock()
+        config_result = mock.MagicMock()
+        config_result.scalar_one_or_none.return_value = None
         valid_cookie = mock.MagicMock()
         valid_cookie.is_valid = True
-        # Build mock hierarchy explicitly to avoid AsyncMock auto-chaining warnings
-        mock_result = mock.MagicMock()
-        mock_result.scalar_one_or_none.return_value = valid_cookie
-        mock_db.execute.return_value = mock_result
+        cookie_result = mock.MagicMock()
+        cookie_result.scalar_one_or_none.return_value = valid_cookie
+
+        async def exec_side_effect(stmt):
+            if "cookie_store" in str(stmt).lower():
+                return cookie_result
+            return config_result
+
+        mock_db.execute = mock.AsyncMock(side_effect=exec_side_effect)
 
         result = await check_boundaries(mock_db, "TEST-001", decision, profit)
 
@@ -322,11 +329,19 @@ async def test_boundary_checker_blocks_stop_ad() -> None:
         return_value=False,
     ):
         mock_db = mock.AsyncMock()
+        config_result = mock.MagicMock()
+        config_result.scalar_one_or_none.return_value = None
         valid_cookie = mock.MagicMock()
         valid_cookie.is_valid = True
-        mock_result = mock.MagicMock()
-        mock_result.scalar_one_or_none.return_value = valid_cookie
-        mock_db.execute.return_value = mock_result
+        cookie_result = mock.MagicMock()
+        cookie_result.scalar_one_or_none.return_value = valid_cookie
+
+        async def exec_side_effect(stmt):
+            if "cookie_store" in str(stmt).lower():
+                return cookie_result
+            return config_result
+
+        mock_db.execute = mock.AsyncMock(side_effect=exec_side_effect)
 
         result = await check_boundaries(mock_db, "TEST-001", decision, profit)
 
