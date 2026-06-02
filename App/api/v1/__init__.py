@@ -12,6 +12,7 @@ from App.api.v1.auth_flow import router as auth_flow_router
 from App.api.v1.backup import router as backup_router
 from App.api.v1.collect import router as collect_router
 from App.api.v1.competitors import router as competitors_router
+from App.api.v1.dashboard import router as dashboard_router
 from App.api.v1.execution import router as execution_router
 from App.api.v1.health import router as health_router
 from App.api.v1.logistics_rates import router as logistics_rates_router
@@ -51,3 +52,4 @@ router.include_router(affiliate_router, tags=["affiliate"])
 router.include_router(platform_router, tags=["platforms"])
 router.include_router(monitoring_router, tags=["monitoring"])
 router.include_router(price_snapshots_router, tags=["price-snapshots"])
+router.include_router(dashboard_router, tags=["dashboard"])
