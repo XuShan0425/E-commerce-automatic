@@ -8,6 +8,7 @@ from App.api.v1.auth import api_key_router, user_router
 from App.api.v1.auth_flow import router as auth_flow_router
 from App.api.v1.backup import router as backup_router
 from App.api.v1.collect import router as collect_router
+from App.api.v1.competitors import router as competitors_router
 from App.api.v1.execution import router as execution_router
 from App.api.v1.health import router as health_router
 from App.api.v1.logistics_rates import router as logistics_rates_router
@@ -35,3 +36,4 @@ router.include_router(platform_fees_router, tags=["platform-fees"])
 router.include_router(rate_parsing_router, tags=["rates"])
 router.include_router(analysis_router, tags=["analysis"])
 router.include_router(execution_router, tags=["execution"])
+router.include_router(competitors_router, tags=["competitors"])
