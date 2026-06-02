@@ -24,7 +24,14 @@ logger = get_logger(__name__)
 
 async def _get_product(db: AsyncSession, sku_id: str) -> Product | None:
     result = await db.execute(select(Product).where(Product.sku_id == sku_id))
-    return result.scalar_one_or_none()
+    product = result.scalar_one_or_none()
+    if product is None:
+        logger.warning(f"DIAG: _get_product: SKU '{sku_id}' not found in products table")
+    else:
+        logger.info(
+            f"DIAG: _get_product: SKU={sku_id} cost_price={float(product.cost_price):.2f} category={product.category}"
+        )
+    return product
 
 
 async def _get_latest_price(db: AsyncSession, sku_id: str) -> float:
@@ -35,11 +42,17 @@ async def _get_latest_price(db: AsyncSession, sku_id: str) -> float:
         .limit(1)
     )
     row = result.scalar_one_or_none()
-    return float(row) if row is not None else 0.0
+    price = float(row) if row is not None else 0.0
+    if price <= 0:
+        logger.warning(f"DIAG: _get_latest_price: SKU={sku_id} no price_snapshots found, returning 0")
+    else:
+        logger.info(f"DIAG: _get_latest_price: SKU={sku_id} current_price={price:.2f}")
+    return price
 
 
 async def _get_platform_fee_rate(db: AsyncSession, category: str | None) -> float:
     if not category:
+        logger.warning("DIAG: _get_platform_fee_rate: product category is None/empty, returning 0")
         return 0.0
     result = await db.execute(
         select(PlatformFee.fee_rate).where(PlatformFee.category.ilike(f"%{category}%"))
@@ -47,8 +60,16 @@ async def _get_platform_fee_rate(db: AsyncSession, category: str | None) -> floa
     row = result.scalar_one_or_none()
     if row is None:
         # fallback: get first available fee_rate
+        logger.warning(
+            f"DIAG: _get_platform_fee_rate: no matching fee for category '{category}', "
+            "trying first available rate"
+        )
         result = await db.execute(select(PlatformFee.fee_rate).limit(1))
         row = result.scalar_one_or_none()
+    if row is None:
+        logger.warning("DIAG: _get_platform_fee_rate: platform_fees table is EMPTY, returning 0")
+    else:
+        logger.info(f"DIAG: _get_platform_fee_rate: category={category} fee_rate={float(row):.4f}")
     return float(row) if row is not None else 0.0
 
 
@@ -59,7 +80,17 @@ async def _get_ad_snapshots_7d(db: AsyncSession, sku_id: str) -> list[AdSnapshot
         .where(AdSnapshot.sku_id == sku_id, AdSnapshot.snapshot_time >= since)
         .order_by(AdSnapshot.snapshot_time.asc())
     )
-    return list(result.scalars().all())
+    snapshots = list(result.scalars().all())
+    if not snapshots:
+        logger.warning(f"DIAG: _get_ad_snapshots_7d: SKU={sku_id} no ad_snapshots in last 7 days")
+    else:
+        total_rev = sum(float(s.revenue) for s in snapshots)
+        total_spend = sum(float(s.ad_spend) for s in snapshots)
+        total_orders = sum(s.orders for s in snapshots)
+        logger.info(
+            f"DIAG: _get_ad_snapshots_7d: SKU={sku_id} count={len(snapshots)} revenue={total_rev:.2f} spend={total_spend:.2f} orders={total_orders}"
+        )
+    return snapshots
 
 
 async def _compute_logistics_cost(
@@ -74,14 +105,21 @@ async def _compute_logistics_cost(
         # fallback: average across all rates
         result = await db.execute(select(func.avg(LogisticsRate.cost)))
         avg = result.scalar_one_or_none()
-        return float(avg) if avg is not None else 0.0
+        cost = float(avg) if avg is not None else 0.0
+        logger.info(
+            f"DIAG: _compute_logistics_cost: no region breakdown, avg={cost:.2f} (table empty={'yes' if avg is None else 'no'})"
+        )
+        return cost
 
     # 获取所有物流费率
     result = await db.execute(select(LogisticsRate))
     all_rates = list(result.scalars().all())
 
     if not all_rates:
+        logger.warning("DIAG: _compute_logistics_cost: logistics_rates table is EMPTY")
         return 0.0
+
+    logger.info(f"DIAG: _compute_logistics_cost: {len(all_rates)} logistics rates found")
 
     # 构建 region → cost 映射（取该 region 的第一个费率）
     region_cost: dict[str, float] = {}
@@ -161,15 +199,22 @@ async def compute_profit(db: AsyncSession, sku_id: str) -> ProfitAnalysis:
         raise ValueError(f"SKU '{sku_id}' 不存在")
 
     cost_price = float(product.cost_price)
+    logger.info(f"DIAG: compute_profit: STEP1 cost_price={cost_price:.2f}")
 
     # 2. 最新价格
     current_price = await _get_latest_price(db, sku_id)
     if current_price <= 0:
         current_price = cost_price  # fallback
+        logger.warning(f"DIAG: compute_profit: no current_price, fell back to cost_price={cost_price:.2f}")
+
+    logger.info(f"DIAG: compute_profit: STEP2 current_price={current_price:.2f}")
 
     # 3. 平台费率
     fee_rate = await _get_platform_fee_rate(db, product.category)
     platform_fee_value = round(current_price * fee_rate, 2)
+    logger.info(
+        f"DIAG: compute_profit: STEP3 fee_rate={fee_rate:.4f} platform_fee={platform_fee_value:.2f}"
+    )
 
     # 4. 近 7 天广告数据
     snapshots = await _get_ad_snapshots_7d(db, sku_id)
@@ -177,6 +222,10 @@ async def compute_profit(db: AsyncSession, sku_id: str) -> ProfitAnalysis:
     total_revenue = sum(float(s.revenue) for s in snapshots)
     total_ad_spend = sum(float(s.ad_spend) for s in snapshots)
     total_orders = sum(s.orders for s in snapshots)
+
+    logger.info(
+        f"DIAG: compute_profit: STEP4 total_revenue={total_revenue:.2f} total_ad_spend={total_ad_spend:.2f} total_orders={total_orders}"
+    )
 
     # 聚合 buyer_region_breakdown
     merged_regions: dict[str, float] = {}
@@ -196,14 +245,26 @@ async def compute_profit(db: AsyncSession, sku_id: str) -> ProfitAnalysis:
         result = await db.execute(select(func.avg(LogisticsRate.cost)))
         avg = result.scalar_one_or_none()
         logistics_cost = float(avg) if avg is not None else 0.0
+        logger.info(
+            f"DIAG: compute_profit: STEP5 logistics fallback avg={logistics_cost:.2f}"
+        )
+    else:
+        logger.info(f"DIAG: compute_profit: STEP5 logistics_cost={logistics_cost:.2f}")
 
     # 6. 核心指标计算
     true_cost = cost_price + logistics_cost + platform_fee_value
+    logger.info(
+        f"DIAG: compute_profit: STEP6 true_cost={true_cost:.2f} (cost_price={cost_price:.2f} + logistics={logistics_cost:.2f} + fee={platform_fee_value:.2f})"
+    )
 
     if current_price > 0:
         gross_margin = (current_price - true_cost) / current_price
     else:
         gross_margin = 0.0
+
+    logger.info(
+        f"DIAG: compute_profit: STEP7 gross_margin={gross_margin:.4f} (current_price={current_price:.2f}, true_cost={true_cost:.2f})"
+    )
 
     # 盈亏平衡广告花费（单件利润）× 预估销量
     unit_profit = current_price - true_cost
@@ -212,14 +273,25 @@ async def compute_profit(db: AsyncSession, sku_id: str) -> ProfitAnalysis:
     else:
         breakeven_ad_spend = unit_profit  # 至少保本
 
+    logger.info(
+        f"DIAG: compute_profit: STEP8 unit_profit={unit_profit:.2f} total_orders={total_orders} breakeven_ad_spend={breakeven_ad_spend:.2f}"
+    )
+
     # 当前 ROI
     if total_ad_spend > 0:
         current_roi = total_revenue / total_ad_spend
     else:
         current_roi = 0.0
 
+    logger.info(
+        f"DIAG: compute_profit: STEP9 current_roi={current_roi:.4f} (revenue={total_revenue:.2f}, ad_spend={total_ad_spend:.2f})"
+    )
+
     # 7 日 ROI 趋势
     roi_trend = _compute_roi_7d_trend(snapshots)
+    logger.info(
+        f"DIAG: compute_profit: STEP10 roi_trend_days={len(roi_trend)}"
+    )
 
     # 7. 写入数据库
     analysis = ProfitAnalysis(
@@ -242,3 +314,46 @@ async def compute_profit(db: AsyncSession, sku_id: str) -> ProfitAnalysis:
     )
 
     return analysis
+
+
+def profit_calculator_smoke_test() -> dict:
+    """快速冒烟测试：验证模块导入和基础函数可调用（无需 DB）。
+
+    Returns:
+        包含各子函数可调用性的状态字典
+    """
+    import inspect
+
+    results: dict[str, bool | str] = {}
+    functions_to_check = [
+        "_get_product",
+        "_get_latest_price",
+        "_get_platform_fee_rate",
+        "_get_ad_snapshots_7d",
+        "_compute_logistics_cost",
+        "_compute_roi_7d_trend",
+        "compute_profit",
+    ]
+    for fn_name in functions_to_check:
+        fn = globals().get(fn_name)
+        if fn is None:
+            results[fn_name] = "NOT_FOUND"
+        elif inspect.iscoroutinefunction(fn):
+            results[fn_name] = True
+        elif callable(fn):
+            results[fn_name] = True
+        else:
+            results[fn_name] = "NOT_CALLABLE"
+
+    # 测试 _compute_roi_7d_trend 同步函数
+    try:
+        trend = _compute_roi_7d_trend([])
+        results["_compute_roi_7d_trend([])"] = f"ok (returned {trend})"
+    except Exception as e:
+        results["_compute_roi_7d_trend([])"] = f"ERROR: {e}"
+
+    all_ok = all(v is True or str(v).startswith("ok") for v in results.values())
+    logger.info(
+        f"profit_calculator_smoke_test: {'PASSED' if all_ok else 'FAILED'} — {results}"
+    )
+    return {"passed": all_ok, "details": results}
