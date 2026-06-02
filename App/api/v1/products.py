@@ -5,14 +5,13 @@ from __future__ import annotations
 import csv
 import io
 
-from App.core.logging import get_logger
-
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from App.core.database import get_db
+from App.core.logging import get_logger
 from App.core.security import verify_api_key
 from App.models.base import Product
 from App.schemas.product import (
@@ -22,6 +21,7 @@ from App.schemas.product import (
     ProductToggleTracking,
     ProductUpdate,
 )
+from App.services.cache_service import get_cache, set_cache
 
 logger = get_logger(__name__)
 
@@ -36,12 +36,30 @@ async def list_products(
     _api_key: str = Depends(verify_api_key),
     db: AsyncSession = Depends(get_db),
 ) -> list[ProductRead]:
-    """列出所有商品。可选 ?tracked=true/false 过滤。"""
+    """列出所有商品。可选 ?tracked=true/false 过滤（缓存 60 秒）。"""
+    cache_key = f"products:list:{tracked}"
+    cached = await get_cache(cache_key)
+    if cached is not None:
+        return [ProductRead(**r) for r in cached]
+
     stmt = select(Product).order_by(Product.created_at.desc())
     if tracked is not None:
         stmt = stmt.where(Product.is_tracked == tracked)
     result = await db.execute(stmt)
     products = result.scalars().all()
+    serializable = [
+        {
+            "id": p.id,
+            "sku_id": p.sku_id,
+            "name": p.name,
+            "cost_price": float(p.cost_price),
+            "category": p.category,
+            "is_tracked": p.is_tracked,
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+        }
+        for p in products
+    ]
+    await set_cache(cache_key, serializable, ttl=60)
     return [ProductRead.model_validate(p) for p in products]
 
 

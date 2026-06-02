@@ -11,6 +11,7 @@ from App.core.logging import get_logger
 from App.core.security import verify_api_key
 from App.models.base import ProfitAnalysis
 from App.schemas.profit_analysis import ProfitAnalysisRead
+from App.services.cache_service import get_cache, set_cache
 
 logger = get_logger(__name__)
 
@@ -76,7 +77,12 @@ async def get_analysis_history(
     _api_key: str = Depends(verify_api_key),
     db: AsyncSession = Depends(get_db),
 ) -> list[ProfitAnalysisRead]:
-    """查看某 SKU 的历史利润分析记录。"""
+    """查看某 SKU 的历史利润分析记录（缓存 60 秒）。"""
+    cache_key = f"analysis:history:{sku_id}:{limit}"
+    cached = await get_cache(cache_key)
+    if cached is not None:
+        return [ProfitAnalysisRead(**r) for r in cached]
+
     result = await db.execute(
         select(ProfitAnalysis)
         .where(ProfitAnalysis.sku_id == sku_id)
@@ -84,6 +90,22 @@ async def get_analysis_history(
         .limit(limit)
     )
     records = result.scalars().all()
+    serializable = [
+        {
+            "id": r.id,
+            "sku_id": r.sku_id,
+            "calc_time": r.calc_time.isoformat() if r.calc_time else None,
+            "logistics_cost": float(r.logistics_cost),
+            "platform_fee": float(r.platform_fee),
+            "true_cost": float(r.true_cost),
+            "gross_margin": float(r.gross_margin),
+            "breakeven_ad_spend": float(r.breakeven_ad_spend),
+            "current_roi": float(r.current_roi),
+            "roi_7d_trend": r.roi_7d_trend,
+        }
+        for r in records
+    ]
+    await set_cache(cache_key, serializable, ttl=60)
     return [ProfitAnalysisRead.model_validate(r) for r in records]
 
 
@@ -92,7 +114,12 @@ async def get_latest_analysis(
     _api_key: str = Depends(verify_api_key),
     db: AsyncSession = Depends(get_db),
 ) -> list[ProfitAnalysisRead]:
-    """获取所有 SKU 的最新一次分析结果。"""
+    """获取所有 SKU 的最新一次分析结果（缓存 30 秒）。"""
+    cache_key = "analysis:latest"
+    cached = await get_cache(cache_key)
+    if cached is not None:
+        return [ProfitAnalysisRead(**r) for r in cached]
+
     from sqlalchemy import and_, func
 
     # 子查询：每个 sku_id 的最新 calc_time
@@ -117,4 +144,20 @@ async def get_latest_analysis(
         .order_by(ProfitAnalysis.sku_id)
     )
     records = result.scalars().all()
+    serializable = [
+        {
+            "id": r.id,
+            "sku_id": r.sku_id,
+            "calc_time": r.calc_time.isoformat() if r.calc_time else None,
+            "logistics_cost": float(r.logistics_cost),
+            "platform_fee": float(r.platform_fee),
+            "true_cost": float(r.true_cost),
+            "gross_margin": float(r.gross_margin),
+            "breakeven_ad_spend": float(r.breakeven_ad_spend),
+            "current_roi": float(r.current_roi),
+            "roi_7d_trend": r.roi_7d_trend,
+        }
+        for r in records
+    ]
+    await set_cache(cache_key, serializable, ttl=30)
     return [ProfitAnalysisRead.model_validate(r) for r in records]
