@@ -75,6 +75,16 @@ class Settings(BaseSettings):
             return []
         return [addr.strip() for addr in self.ALERT_EMAIL_TO.split(",") if addr.strip()]
 
+    # ── Multi-Channel Notification ──────────────────
+    # 企业微信机器人 Webhook URL（用于发送 Markdown 消息）
+    WECHAT_WEBHOOK_URL: str = ""
+    # Telegram Bot Token（从 @BotFather 获取）
+    TELEGRAM_BOT_TOKEN: str = ""
+    # Telegram 目标聊天 ID（用户或群组）
+    TELEGRAM_CHAT_ID: str = ""
+    # Slack Incoming Webhook URL
+    SLACK_WEBHOOK_URL: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:
