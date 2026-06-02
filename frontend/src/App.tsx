@@ -13,6 +13,8 @@ const RatesSettings = lazy(() => import('./pages/RatesSettings'));
 const Reports = lazy(() => import('./pages/Reports'));
 const ABTesting = lazy(() => import('./pages/ABTesting'));
 const ExportPage = lazy(() => import('./pages/Export'));
+const Webhooks = lazy(() => import('./pages/Webhooks'));
+const Competitors = lazy(() => import('./pages/Competitors'));
 
 function PageLoading() {
   return (
@@ -31,12 +33,14 @@ export function App() {
             <Routes>
               <Route path="/" element={<Dashboard />} />
               <Route path="/products" element={<Products />} />
+              <Route path="/competitors" element={<Competitors />} />
               <Route path="/logs" element={<Logs />} />
               <Route path="/alerts" element={<Alerts />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/rates-settings" element={<RatesSettings />} />
               <Route path="/reports" element={<Reports />} />
               <Route path="/ab-testing" element={<ABTesting />} />
+              <Route path="/webhooks" element={<Webhooks />} />
               <Route path="/export" element={<ExportPage />} />
             </Routes>
           </Suspense>

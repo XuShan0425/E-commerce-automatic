@@ -11,6 +11,7 @@ const NAV = [
   { to: '/logs', label: '日志中心', icon: '📋' },
   { to: '/alerts', label: '警报中心', icon: '🔔' },
   { to: '/backups', label: '备份管理', icon: '💾' },
+  { to: '/webhooks', label: 'Webhooks', icon: '🔗' },
   { to: '/reports', label: '报告查看', icon: '📈' },
   { to: '/export', label: '数据导出', icon: '📤' },
   { to: '/settings', label: '系统设置', icon: '⚙️' },
