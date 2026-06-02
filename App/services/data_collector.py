@@ -18,14 +18,14 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import Insert as PgInsert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from App.models.base import Product
+from App.models.base import AdSnapshot, PriceSnapshot, Product
+from App.models.system_state import is_global_stop_active
 
 from App.services.api_interceptor import AdDataInterceptor, CollectedAdData, CollectedPriceData
 from App.core.errors import ErrorCode, error_response
-from App.models.base import AdSnapshot, PriceSnapshot
-from App.models.system_state import is_global_stop_active
 
 if TYPE_CHECKING:
     from App.services.browser import BrowserService
@@ -356,4 +356,109 @@ async def collect_ad_data(
         "errors": raw.get("errors", []),
         "collected_at": raw.get("collected_at"),
         "method": raw.get("method", "unknown"),
+    }
+
+
+# ── Product upsert via CSP export ─────────────────────
+
+
+async def upsert_products_from_export(
+    db: AsyncSession,
+    cookie_manager: CookieManager,
+    headless: bool = True,
+    timeout: int = 60,
+) -> dict:
+    """使用 CSP 导出功能采集商品数据并 upsert 到 products 表。
+
+    流程:
+      1. 使用 product_scraper.scrape_products_via_export 从 CSP 导出商品列表
+      2. 使用 PostgreSQL ON CONFLICT upsert 写入 products 表
+
+    Args:
+        db: 数据库会话
+        cookie_manager: Cookie 管理器
+        headless: 是否无头模式
+        timeout: 导出等待超时（秒）
+
+    Returns:
+        {"success": bool, "upserted": int, "products": list, "errors": list, ...}
+    """
+    from App.services.product_scraper import scrape_products_via_export
+
+    # ── 前置检查：Cookie ──────────────────────────
+    cookies = await cookie_manager.load_cookies("aliexpress.com")
+    if not cookies:
+        return error_response(ErrorCode.COOKIE_MISSING, details={"action": "请先执行首次登录"})
+
+    # ── 执行导出采集 ──────────────────────────────
+    export_result = await scrape_products_via_export(
+        cookie_manager, headless=headless, timeout=timeout
+    )
+
+    if not export_result.get("success"):
+        return {
+            "success": False,
+            "upserted": 0,
+            "products": [],
+            "errors": export_result.get("errors", ["导出采集失败"]),
+            "duration_seconds": export_result.get("duration_seconds", 0),
+        }
+
+    products = export_result.get("products", [])
+    if not products:
+        return {
+            "success": True,
+            "upserted": 0,
+            "products": [],
+            "errors": ["导出文件为空，无商品数据需要同步"],
+            "duration_seconds": export_result.get("duration_seconds", 0),
+        }
+
+    # ── Upsert 到 products 表 ─────────────────────
+    upserted_count = 0
+    upserted_skus: list[str] = []
+
+    for prod in products:
+        sku_id = prod.get("sku_id", "")
+        name = prod.get("name", "")
+        category = prod.get("category", "")
+
+        if not sku_id or not name:
+            continue
+
+        try:
+            stmt = PgInsert(Product).values(
+                sku_id=sku_id,
+                name=name,
+                category=category if category else None,
+                cost_price=0.0,  # 成本价默认值，用户可在控制台修改
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["sku_id"],
+                set_={
+                    "name": stmt.excluded.name,
+                    "category": stmt.excluded.category,
+                },
+            )
+            await db.execute(stmt)
+            upserted_count += 1
+            upserted_skus.append(sku_id)
+        except Exception as exc:
+            logger.error("商品 upsert 失败: sku=%s error=%s", sku_id, exc)
+
+    await db.flush()
+
+    logger.info(
+        "商品数据同步完成: 导出 %d 件, upsert %d 件",
+        len(products),
+        upserted_count,
+    )
+
+    return {
+        "success": True,
+        "upserted": upserted_count,
+        "total_exported": len(products),
+        "products": upserted_skus,
+        "errors": export_result.get("errors", []),
+        "duration_seconds": export_result.get("duration_seconds", 0),
     }

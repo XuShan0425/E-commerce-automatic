@@ -33,11 +33,14 @@
 
 from __future__ import annotations
 
+import csv
+import os
 import re
+import tempfile
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from App.core.logging import get_logger
 
@@ -832,6 +835,358 @@ def _extract_from_inner_text(page) -> list[dict]:
             })
 
     return products
+
+
+# ── CSP 导出功能 ────────────────────────────────────
+#
+# 替代策略：通过 CSP 商品管理页面的导出功能下载 CSV/XLSX，
+# 替代三重 DOM 抓取策略。跟随 SYCM 已验证的导出范式。
+
+_EXPORT_BUTTON_TEXTS = ["导出", "下载", "导出报表", "Export", "Download", "产品导出"]
+_EXPORT_FILE_EXTENSIONS = {".csv", ".xlsx", ".xls"}
+_EXPORT_TIMEOUT_SEC = 60
+
+# ── 导出文件中各字段的列名候选项 ──────────────
+_SKU_ID_COLUMNS = {"商品ID", "商品编号", "产品ID", "Product ID", "SKU ID", "product_id", "sku_id", "item_id"}
+_NAME_COLUMNS = {"商品名称", "商品名", "产品名称", "产品名", "Product Name", "product_name", "name", "商品标题"}
+_CATEGORY_COLUMNS = {"类目", "所属类目", "产品类目", "类目路径", "Category", "category", "category_path"}
+_PRICE_COLUMNS = {"销售价格", "价格", "售价", "销售价", "Price", "price", "sell_price", "retail_price", "current_price"}
+_LISTING_TIME_COLUMNS = {"上架时间", "创建时间", "发布时间", "Listing Time", "create_time", "listing_time", "gmt_create"}
+
+
+def _try_trigger_export(page) -> str | None:
+    """导航到 CSP 商品管理页并尝试触发导出，返回下载文件路径。"""
+    temp_dir = tempfile.mkdtemp(prefix="ae_product_export_")
+    download_paths: list[str] = []
+
+    def _on_download(download):
+        ext = os.path.splitext(download.suggested_filename)[1].lower()
+        if ext in _EXPORT_FILE_EXTENSIONS:
+            dest = os.path.join(temp_dir, download.suggested_filename)
+            try:
+                download.save_as(dest)
+                download_paths.append(dest)
+                logger.info("导出文件已保存: %s (%s)", dest, ext)
+            except Exception as e:
+                logger.debug("保存导出文件失败: %s", e)
+
+    page.on("download", _on_download)
+
+    # ── 尝试查找并点击导出按钮 ──────────────────
+    export_found = False
+    for btn_text in _EXPORT_BUTTON_TEXTS:
+        try:
+            selectors = [
+                f"button:has-text('{btn_text}')",
+                f"text='{btn_text}'",
+                f".ait-btn:has-text('{btn_text}')",
+                f"a:has-text('{btn_text}')",
+                f"[class*='export']:has-text('{btn_text}')",
+                f"[class*='download']:has-text('{btn_text}')",
+            ]
+            for sel in selectors:
+                btn = page.query_selector(sel)
+                if btn and btn.is_visible():
+                    btn.click()
+                    export_found = True
+                    logger.info("点击导出按钮: '%s' (选择器: %s)", btn_text, sel)
+                    break
+            if export_found:
+                break
+        except Exception:
+            continue
+
+    if not export_found:
+        logger.warning("未找到导出按钮，尝试的文本: %s", _EXPORT_BUTTON_TEXTS)
+        page.remove_listener("download", _on_download)
+        _cleanup_temp_dir(temp_dir)
+        return None
+
+    # ── 等待下载完成 ────────────────────────────
+    deadline = time.monotonic() + _EXPORT_TIMEOUT_SEC
+    while time.monotonic() < deadline and len(download_paths) == 0:
+        time.sleep(1)
+
+    page.remove_listener("download", _on_download)
+
+    if not download_paths:
+        logger.warning("导出超时（%d秒），未收到文件", _EXPORT_TIMEOUT_SEC)
+        _cleanup_temp_dir(temp_dir)
+        return None
+
+    return download_paths[0]
+
+
+def _cleanup_temp_dir(temp_dir: str) -> None:
+    """清理临时目录。"""
+    try:
+        import shutil
+        shutil.rmtree(temp_dir, ignore_errors=True)
+    except Exception:
+        pass
+
+
+def _find_column(header_set: set[str], candidates: set[str]) -> str | None:
+    """在导入文件的列名集合中匹配候选列名之一（不区分大小写，精确匹配或包含）。"""
+    for col in header_set:
+        col_lower = col.lower().strip()
+        for candidate in candidates:
+            if col_lower == candidate.lower():
+                return col
+    # 第二次遍历：包含匹配（如"商品ID(Product ID)" 匹配 "商品ID"）
+    for col in header_set:
+        col_lower = col.lower().strip()
+        for candidate in candidates:
+            if candidate.lower() in col_lower or col_lower in candidate.lower():
+                return col
+    return None
+
+
+def _extract_product_from_row(row: dict[str, str], columns: set[str]) -> dict[str, Any] | None:
+    """从 CSV/XLSX 的一行中提取标准化商品字段。"""
+    # ── SKU ID (必须) ──
+    col = _find_column(columns, _SKU_ID_COLUMNS)
+    if not col:
+        return None
+    raw_id = str(row.get(col, "")).strip()
+    id_match = re.search(r"(\d{7,20})", raw_id)
+    if not id_match:
+        return None
+    sku_id = id_match.group(1)
+
+    # ── Name (必须) ──
+    col = _find_column(columns, _NAME_COLUMNS)
+    if not col:
+        return None
+    name = str(row.get(col, "")).strip()[:300]
+    if not name or len(name) < 2:
+        return None
+
+    # ── Price ──
+    price = 0.0
+    col = _find_column(columns, _PRICE_COLUMNS)
+    if col:
+        raw_price = str(row.get(col, "")).strip()
+        # 清理货币符号和千分位
+        raw_price = raw_price.replace(",", "").replace("$", "").replace("USD", "").replace("CNY", "").strip()
+        try:
+            price = float(raw_price)
+        except (ValueError, TypeError):
+            price = 0.0
+
+    # ── Category ──
+    category = ""
+    col = _find_column(columns, _CATEGORY_COLUMNS)
+    if col:
+        category = str(row.get(col, "")).strip()[:200]
+
+    # ── Listing time ──
+    listing_time = ""
+    col = _find_column(columns, _LISTING_TIME_COLUMNS)
+    if col:
+        listing_time = str(row.get(col, "")).strip()
+
+    return {
+        "sku_id": sku_id,
+        "name": name,
+        "current_price": price,
+        "category": category,
+        "listing_time": listing_time,
+    }
+
+
+def _parse_product_csv(file_path: str) -> list[dict[str, Any]]:
+    """解析 CSP 导出的 CSV 文件。"""
+    products: list[dict[str, Any]] = []
+    try:
+        with open(file_path, encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            if not reader.fieldnames:
+                return products
+            columns = {h.strip() for h in reader.fieldnames if h}
+            for row in reader:
+                product = _extract_product_from_row(row, columns)
+                if product:
+                    products.append(product)
+    except Exception as exc:
+        logger.debug("CSV 解析失败: %s", exc)
+    return products
+
+
+def _parse_product_xlsx(file_path: str) -> list[dict[str, Any]]:
+    """解析 CSP 导出的 XLSX 文件。"""
+    try:
+        import openpyxl
+    except ImportError:
+        logger.debug("openpyxl 未安装，无法解析 XLSX 文件")
+        return []
+
+    products: list[dict[str, Any]] = []
+    try:
+        wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+        ws = wb.active
+        if ws is None:
+            wb.close()
+            return products
+
+        rows = list(ws.iter_rows(values_only=True))
+        if len(rows) < 2:
+            wb.close()
+            return products
+
+        # 第一行作为表头
+        header_row = list(rows[0])
+        headers = [str(h).strip() if h is not None else "" for h in header_row]
+        columns = {h for h in headers if h}
+
+        for row_data in rows[1:]:
+            if not row_data:
+                continue
+            row_dict: dict[str, str] = {}
+            for i, val in enumerate(row_data):
+                if i < len(headers) and headers[i]:
+                    row_dict[headers[i]] = str(val).strip() if val is not None else ""
+            product = _extract_product_from_row(row_dict, columns)
+            if product:
+                products.append(product)
+
+        wb.close()
+    except Exception as exc:
+        logger.debug("XLSX 解析失败: %s", exc)
+
+    return products
+
+
+def _parse_exported_file(file_path: str) -> list[dict[str, Any]]:
+    """自动检测导出文件格式并解析。"""
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext == ".csv":
+        return _parse_product_csv(file_path)
+    elif ext in (".xlsx", ".xls"):
+        return _parse_product_xlsx(file_path)
+    # 未知扩展名，先试 CSV 再试 XLSX
+    products = _parse_product_csv(file_path)
+    if not products:
+        products = _parse_product_xlsx(file_path)
+    return products
+
+
+def _run_export_sync(
+    cookies: list[dict],
+    headless: bool = False,
+    timeout: int = 60,
+) -> dict[str, Any]:
+    """在同步线程中执行导出式商品数据采集。"""
+    from App.services.browser import BrowserService
+
+    result: dict[str, Any] = {
+        "success": False,
+        "products": [],
+        "errors": [],
+        "export_method": "csp_export",
+        "scraped_at": datetime.now(UTC).isoformat(),
+    }
+
+    t0 = time.perf_counter()
+    browser_svc: BrowserService | None = None
+
+    try:
+        browser_svc = BrowserService(headless=headless)
+        context = browser_svc.new_context(cookies=cookies)
+        page = context.new_page()
+
+        # ── 导航到 CSP 商品管理页 ────────────────
+        try:
+            page.goto(CSP_PRODUCT_LIST_URL, wait_until="domcontentloaded", timeout=30_000)
+            page.wait_for_timeout(5_000)
+        except Exception as exc:
+            result["errors"].append(f"导航到商品管理页失败: {exc}")
+            page.close()
+            context.close()
+            result["duration_seconds"] = round(time.perf_counter() - t0, 2)
+            return result
+
+        # 检查登录状态
+        if "login" in page.url.lower():
+            result["errors"].append("Cookie 已过期，请重新登录")
+            page.close()
+            context.close()
+            result["duration_seconds"] = round(time.perf_counter() - t0, 2)
+            return result
+
+        # 等待页面加载
+        try:
+            page.wait_for_load_state("networkidle", timeout=20_000)
+        except Exception:
+            page.wait_for_timeout(5_000)
+
+        # ── 触发导出 ──────────────────────────────
+        file_path = _try_trigger_export(page)
+        if file_path is None:
+            result["errors"].append("未找到导出按钮或导出超时")
+            result["duration_seconds"] = round(time.perf_counter() - t0, 2)
+            return result
+
+        # ── 解析导出文件 ──────────────────────────
+        products = _parse_exported_file(file_path)
+
+        # 清理临时文件
+        try:
+            os.remove(file_path)
+            os.rmdir(os.path.dirname(file_path))
+        except Exception:
+            pass
+
+        if not products:
+            result["errors"].append("导出的文件未解析出有效商品数据")
+            result["_export_file_path"] = file_path
+        else:
+            result["products"] = products
+            result["success"] = True
+            logger.info("导出解析完成: %d 件商品", len(products))
+
+        page.close()
+        context.close()
+
+    except Exception as exc:
+        result["errors"].append(f"导出流程异常: {exc}")
+    finally:
+        if browser_svc is not None:
+            browser_svc.close()
+        result["duration_seconds"] = round(time.perf_counter() - t0, 2)
+
+    return result
+
+
+async def scrape_products_via_export(
+    cookie_manager: CookieManager,
+    headless: bool = False,
+    timeout: int = 60,
+) -> dict[str, Any]:
+    """使用 CSP 导出功能采集商品列表（异步入口）。
+
+    替代三重 DOM 抓取策略，使用 CSP 商品管理页的内置导出功能，
+    获得比 DOM 解析更稳定、完整的商品数据。
+
+    Args:
+        cookie_manager: Cookie 管理器
+        headless: 是否无头模式
+        timeout: 导出等待超时（秒）
+
+    Returns:
+        包含 "products" (list[dict]) 和 "success" (bool) 的 dict
+    """
+    import asyncio
+
+    from App.core.errors import ErrorCode, error_response
+
+    cookies = await cookie_manager.load_cookies("aliexpress.com")
+    if not cookies:
+        return error_response(ErrorCode.COOKIE_MISSING)
+
+    loop = asyncio.get_event_loop()
+    raw = await loop.run_in_executor(None, _run_export_sync, cookies, headless, timeout)
+    return raw
 
 
 # ── 异步入口 ──────────────────────────────────────
