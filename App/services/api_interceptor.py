@@ -2,46 +2,90 @@
 
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from playwright.sync_api import Page, Response as PWResponse
-
+from playwright.sync_api import Page
+from playwright.sync_api import Response as PWResponse
 
 # ── 广告数据识别模式 ────────────────────────────
 # 速卖通后台 API 可能使用多种字段名（驼峰/下划线/缩写）
 _AD_FIELD_PATTERNS: dict[str, list[str]] = {
     "impressions": [
-        "impression", "impressions", "impressionCnt", "showCnt",
-        "impression_count", "展现", "展现量", "展示", "曝光", "曝光量",
+        "impression",
+        "impressions",
+        "impressionCnt",
+        "showCnt",
+        "impression_count",
+        "展现",
+        "展现量",
+        "展示",
+        "曝光",
+        "曝光量",
     ],
     "clicks": ["click", "clicks", "clickCnt", "click_count", "点击", "点击量", "клик", "clic"],
     "ctr": ["ctr", "clickRate", "click_rate", "ctrRate", "点击率"],
     "orders": [
-        "order", "orders", "orderCnt", "orderCount", "order_count",
-        "transactionCnt", "订单", "订单量", "заказ",
+        "order",
+        "orders",
+        "orderCnt",
+        "orderCount",
+        "order_count",
+        "transactionCnt",
+        "订单",
+        "订单量",
+        "заказ",
     ],
     "conversion_rate": [
-        "conversionRate", "conversion_rate", "cvr", "cvrRate",
-        "orderRate", "转化率", "конверсия",
+        "conversionRate",
+        "conversion_rate",
+        "cvr",
+        "cvrRate",
+        "orderRate",
+        "转化率",
+        "конверсия",
     ],
     "ad_spend": [
-        "spend", "cost", "adSpend", "adCost", "ad_spend",
-        "charge", "consumeAmt", "花费", "消耗", "расход",
+        "spend",
+        "cost",
+        "adSpend",
+        "adCost",
+        "ad_spend",
+        "charge",
+        "consumeAmt",
+        "花费",
+        "消耗",
+        "расход",
     ],
     "revenue": [
-        "revenue", "sales", "salesAmt", "salesAmount",
-        "revenueAmt", "transAmt", "销售额", "выручка",
+        "revenue",
+        "sales",
+        "salesAmt",
+        "salesAmount",
+        "revenueAmt",
+        "transAmt",
+        "销售额",
+        "выручка",
     ],
     "ad_type": [
-        "adType", "ad_type", "campaignType", "campaign_type", "marketingType", "广告类型",
+        "adType",
+        "ad_type",
+        "campaignType",
+        "campaign_type",
+        "marketingType",
+        "广告类型",
     ],
     "buyer_region": [
-        "buyerRegionBreakdown", "buyer_region_breakdown",
-        "regionBreakdown", "countryBreakdown", "areaDistribution",
-        "regionList", "countryList", "国家", "地区",
+        "buyerRegionBreakdown",
+        "buyer_region_breakdown",
+        "regionBreakdown",
+        "countryBreakdown",
+        "areaDistribution",
+        "regionList",
+        "countryList",
+        "国家",
+        "地区",
     ],
     "sku_id": ["skuId", "sku_id", "productId", "product_id", "itemId", "item_id"],
 }
@@ -49,6 +93,124 @@ _AD_FIELD_PATTERNS: dict[str, list[str]] = {
 _PRICE_FIELD_PATTERNS: dict[str, list[str]] = {
     "current_price": ["currentPrice", "current_price", "price", "sellPrice", "salePrice"],
 }
+
+# ── 竞品数据识别模式 ────────────────────────────
+# 速卖通推荐 API / 商品详情 API 中可能包含竞品信息
+_COMPETITOR_FIELD_PATTERNS: dict[str, list[str]] = {
+    "sku_id": [
+        "skuId",
+        "sku_id",
+        "productId",
+        "product_id",
+        "itemId",
+        "item_id",
+        "offerId",
+        "offer_id",
+    ],
+    "name": [
+        "name",
+        "productName",
+        "product_name",
+        "offerName",
+        "offer_name",
+        "title",
+        "subject",
+    ],
+    "price": [
+        "price",
+        "offerPrice",
+        "offer_price",
+        "salePrice",
+        "sale_price",
+        "currentPrice",
+        "minPrice",
+        "maxPrice",
+    ],
+    "rating": [
+        "rating",
+        "score",
+        "starRating",
+        "star_rating",
+        "avgRating",
+        "averageRating",
+        "feedbackRating",
+    ],
+    "sales": [
+        "sales",
+        "soldQuantity",
+        "sold_quantity",
+        "orderCount",
+        "order_count",
+        "totalSales",
+        "total_sales",
+    ],
+}
+
+# ── 竞品相关 API URL 特征 ───────────────────────
+# 推荐算法 API、商品推荐、also-bought、related products
+_COMPETITOR_URL_PATTERNS = [
+    r"seller-acs\.aliexpress\.com/h5/mtop.*recommend",
+    r"seller-acs\.aliexpress\.com/h5/mtop.*product",
+    r"seller-acs\.aliexpress\.com/h5/mtop.*search",
+    r"seller-acs\.aliexpress\.com/h5/mtop.*item",
+    r"seller-acs\.aliexpress\.com/h5/mtop.*offer",
+    r"seller-acs\.aliexpress\.com/h5/mtop.*similar",
+    r"seller-acs\.aliexpress\.com/h5/mtop.*related",
+    r"seller-acs\.aliexpress\.com/h5/mtop.*recmd",
+    r"seller-acs\.aliexpress\.com/h5/mtop.*crosssell",
+    r"seller-acs\.aliexpress\.com/h5/mtop.*upsell",
+    r"/api/recommend",
+    r"/api/product",
+    r"/api/similar",
+    r"/api/related",
+]
+
+
+def _is_competitor_api(url: str) -> bool:
+    return any(re.search(pattern, url, re.IGNORECASE) for pattern in _COMPETITOR_URL_PATTERNS)
+
+
+def _find_competitor_items(body: Any, source_sku_id: str = "") -> list[dict]:
+    """在 JSON 响应中查找竞品条目列表。
+
+    查找策略:
+      1. 查找顶层名为 products/items/offers/data/list 的数组
+      2. 数组元素需包含 sku_id / productId / price 等字段
+      3. 过滤掉与自身 SKU 相同的条目（保留 source_sku_id 标记）
+    """
+    results: list[dict] = []
+
+    def _search(obj: Any) -> None:
+        """递归搜索 JSON 结构中的竞品条目列表。"""
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                if isinstance(value, list) and len(value) > 0:
+                    # 检查列表元素是否为商品条目（含 sku_id 和 price）
+                    if all(isinstance(item, dict) for item in value):
+                        sample = value[0]
+                        if _has_any_key(sample, _COMPETITOR_FIELD_PATTERNS["sku_id"]):
+                            for item in value:
+                                fv = _find_value  # local alias
+                                fp = _COMPETITOR_FIELD_PATTERNS
+                                extracted = {
+                                    "sku_id": str(fv(item, fp["sku_id"]) or ""),
+                                    "name": str(fv(item, fp["name"]) or ""),
+                                    "price": _safe_float(fv(item, fp["price"])),
+                                    "rating": _safe_float(fv(item, fp["rating"]), default=None),
+                                    "sales": _safe_int(fv(item, fp["sales"])),
+                                    "source_sku_id": source_sku_id,
+                                }
+                                # 只保留有 SKU ID 的条目，且过滤掉自身
+                                if extracted["sku_id"] and extracted["sku_id"] != source_sku_id:
+                                    results.append(extracted)
+                elif isinstance(value, (dict, list)):
+                    _search(value)
+        elif isinstance(obj, list):
+            for item in obj:
+                _search(item)
+
+    _search(body)
+    return results
 
 
 def _has_any_key(data: dict, patterns: list[str]) -> bool:
@@ -106,7 +268,9 @@ def _find_all_dicts(data: Any, field_patterns: dict[str, list[str]]) -> list[dic
     return results
 
 
-def _safe_float(value: Any, default: float = 0.0) -> float:
+def _safe_float(value: Any, default: float | None = 0.0) -> float | None:
+    if default is None and value is None:
+        return None
     try:
         return float(value)
     except (TypeError, ValueError):
@@ -165,6 +329,7 @@ def _is_ad_api(url: str) -> bool:
 
 # ── 拦截器 ──────────────────────────────────────
 
+
 @dataclass
 class CollectedAdData:
     source_url: str = ""
@@ -189,9 +354,23 @@ class CollectedPriceData:
 
 
 @dataclass
+class CollectedCompetitorData:
+    """从推荐 API 中提取的竞品数据条目。"""
+
+    sku_id: str = ""
+    name: str = ""
+    price: float = 0.0
+    rating: float | None = None
+    sales: int | None = None
+    source_sku_id: str = ""
+    source_url: str = ""
+
+
+@dataclass
 class InterceptResult:
     ad_data: list[CollectedAdData] = field(default_factory=list)
     price_data: list[CollectedPriceData] = field(default_factory=list)
+    competitor_data: list[CollectedCompetitorData] = field(default_factory=list)
     total_responses: int = 0
     ad_api_responses: int = 0
 
@@ -215,7 +394,7 @@ class AdDataInterceptor:
 
         url = response.url
         # 只处理 API 请求
-        if not _is_ad_api(url):
+        if not _is_ad_api(url) and not _is_competitor_api(url):
             return
 
         self.result.ad_api_responses += 1
@@ -230,6 +409,7 @@ class AdDataInterceptor:
 
         self._extract_ad_data(url, body)
         self._extract_price_data(url, body)
+        self._extract_competitor_data(url, body)
 
     def _extract_ad_data(self, url: str, body: Any) -> None:
         candidates = _find_all_dicts(body, _AD_FIELD_PATTERNS)
@@ -254,6 +434,24 @@ class AdDataInterceptor:
             # 至少要有一些关键字段才算有效数据
             if ad.impressions > 0 or ad.clicks > 0 or ad.ad_spend > 0 or ad.sku_id:
                 self.result.ad_data.append(ad)
+
+    def _extract_competitor_data(self, url: str, body: Any) -> None:
+        """从推荐/商品 API 响应中提取竞品数据。"""
+        if not _is_competitor_api(url):
+            return
+        items = _find_competitor_items(body)
+        for item in items:
+            comp = CollectedCompetitorData(
+                source_url=url,
+                sku_id=item.get("sku_id", ""),
+                name=item.get("name", ""),
+                price=item.get("price", 0.0),
+                rating=item.get("rating"),
+                sales=item.get("sales"),
+                source_sku_id=item.get("source_sku_id", ""),
+            )
+            if comp.sku_id:
+                self.result.competitor_data.append(comp)
 
     def _extract_price_data(self, url: str, body: Any) -> None:
         candidates = _find_all_dicts(body, _PRICE_FIELD_PATTERNS)

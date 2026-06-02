@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
-import json
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from App.services.api_interceptor import AdDataInterceptor, CollectedAdData, CollectedPriceData
 from App.core.errors import ErrorCode, error_response
-from App.models.base import AdSnapshot, PriceSnapshot
+from App.models.base import AdSnapshot, CompetitorSnapshot, PriceSnapshot
 from App.models.system_state import is_global_stop_active
+from App.services.api_interceptor import (
+    AdDataInterceptor,
+    CollectedAdData,
+    CollectedCompetitorData,
+    CollectedPriceData,
+)
 
 if TYPE_CHECKING:
     from App.services.browser import BrowserService
@@ -44,7 +48,7 @@ def _run_collection_sync(
         "ad_api_responses": 0,
         "errors": [],
         "duration_seconds": 0,
-        "collected_at": datetime.now(timezone.utc).isoformat(),
+        "collected_at": datetime.now(UTC).isoformat(),
     }
 
     t0 = time.perf_counter()
@@ -78,8 +82,10 @@ def _run_collection_sync(
 
         result["ad_data"] = interceptor.result.ad_data
         result["price_data"] = interceptor.result.price_data
+        result["competitor_data"] = interceptor.result.competitor_data
         result["ad_count"] = len(interceptor.result.ad_data)
         result["price_count"] = len(interceptor.result.price_data)
+        result["competitor_count"] = len(interceptor.result.competitor_data)
         result["total_responses"] = interceptor.result.total_responses
         result["ad_api_responses"] = interceptor.result.ad_api_responses
         result["success"] = True
@@ -110,13 +116,14 @@ async def collect_ad_data(
 
     # ── 检查全局停止 ──────────────────────────────
     if await is_global_stop_active(db):
-        return error_response(ErrorCode.GLOBAL_STOP, details={"action": "请检查警报中心并清除全局停止"})
+        return error_response(
+            ErrorCode.GLOBAL_STOP,
+            details={"action": "请检查警报中心并清除全局停止"},
+        )
 
     # ── 在后台线程执行同步浏览器操作 ──────────────
     loop = asyncio.get_event_loop()
-    raw = await loop.run_in_executor(
-        None, _run_collection_sync, cookies, headless, timeout
-    )
+    raw = await loop.run_in_executor(None, _run_collection_sync, cookies, headless, timeout)
 
     if not raw.get("success"):
         return error_response(
@@ -128,7 +135,8 @@ async def collect_ad_data(
 
     saved_ads = 0
     saved_prices = 0
-    now = datetime.now(timezone.utc)
+    saved_competitors = 0
+    now = datetime.now(UTC)
 
     for ad in raw.get("ad_data", []):
         if not isinstance(ad, CollectedAdData):
@@ -164,12 +172,30 @@ async def collect_ad_data(
         db.add(snapshot)
         saved_prices += 1
 
+    for comp in raw.get("competitor_data", []):
+        if not isinstance(comp, CollectedCompetitorData):
+            continue
+        if not comp.sku_id:
+            continue
+        snapshot = CompetitorSnapshot(
+            sku_id=comp.sku_id,
+            name=comp.name,
+            price=comp.price,
+            rating=comp.rating,
+            sales=comp.sales,
+            snapshot_time=now,
+            source_sku_id=comp.source_sku_id,
+        )
+        db.add(snapshot)
+        saved_competitors += 1
+
     await db.flush()
 
     return {
         "success": True,
         "ad_count": saved_ads,
         "price_count": saved_prices,
+        "competitor_count": saved_competitors,
         "total_responses": raw.get("total_responses", 0),
         "ad_api_responses": raw.get("ad_api_responses", 0),
         "duration_seconds": raw.get("duration_seconds", 0),

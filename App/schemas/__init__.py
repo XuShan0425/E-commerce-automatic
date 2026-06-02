@@ -3,7 +3,11 @@
 from App.schemas.ad_snapshot import AdSnapshotCreate, AdSnapshotRead
 from App.schemas.alert import AlertRead
 from App.schemas.auth import ApiKeyCreate, ApiKeyRead, ApiKeyReveal
-from App.schemas.cookie import CookieStoreCreate, CookieStoreRead
+from App.schemas.competitor import (
+    CompetitorCompareItem,
+    CompetitorCompareResponse,
+    CompetitorSnapshotRead,
+)
 from App.schemas.price_snapshot import PriceSnapshotCreate, PriceSnapshotRead
 from App.schemas.product import ProductCreate, ProductRead, ProductUpdate
 from App.schemas.profit_analysis import ProfitAnalysisBase, ProfitAnalysisRead
@@ -37,4 +41,7 @@ __all__ = [
     "CookieStoreRead",
     "SystemStateRead",
     "SystemStatus",
+    "CompetitorSnapshotRead",
+    "CompetitorCompareItem",
+    "CompetitorCompareResponse",
 ]

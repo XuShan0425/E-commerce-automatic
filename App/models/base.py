@@ -6,12 +6,10 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     DateTime,
-    Float,
     Index,
     Integer,
     Numeric,
     String,
-    Text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncAttrs
@@ -63,9 +61,7 @@ class PlatformFee(AsyncAttrs, Base):
 
 class AdSnapshot(AsyncAttrs, Base):
     __tablename__ = "ad_snapshots"
-    __table_args__ = (
-        Index("idx_ad_snapshots_sku_time", "sku_id", "snapshot_time"),
-    )
+    __table_args__ = (Index("idx_ad_snapshots_sku_time", "sku_id", "snapshot_time"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     sku_id: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -85,9 +81,7 @@ class AdSnapshot(AsyncAttrs, Base):
 
 class PriceSnapshot(AsyncAttrs, Base):
     __tablename__ = "price_snapshots"
-    __table_args__ = (
-        Index("idx_price_snapshots_sku_time", "sku_id", "snapshot_time"),
-    )
+    __table_args__ = (Index("idx_price_snapshots_sku_time", "sku_id", "snapshot_time"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     sku_id: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -99,9 +93,7 @@ class PriceSnapshot(AsyncAttrs, Base):
 
 class ProfitAnalysis(AsyncAttrs, Base):
     __tablename__ = "profit_analysis"
-    __table_args__ = (
-        Index("idx_profit_analysis_sku_time", "sku_id", "calc_time"),
-    )
+    __table_args__ = (Index("idx_profit_analysis_sku_time", "sku_id", "calc_time"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     sku_id: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -115,3 +107,26 @@ class ProfitAnalysis(AsyncAttrs, Base):
     breakeven_ad_spend: Mapped[float] = mapped_column(Numeric(10, 2), default=0)
     current_roi: Mapped[float] = mapped_column(Numeric(7, 4), default=0)
     roi_7d_trend: Mapped[dict | None] = mapped_column(JSONB, default=list)
+
+
+class CompetitorSnapshot(AsyncAttrs, Base):
+    """竞品数据快照 — 被动从推荐 API 提取的竞品信息。
+
+    TTL: 7 天，竞品数据过时快，需定期清理。
+    """
+
+    __tablename__ = "competitor_snapshots"
+    __table_args__ = (Index("idx_competitor_snapshots_sku_time", "sku_id", "snapshot_time"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    sku_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    name: Mapped[str | None] = mapped_column(String(500))
+    price: Mapped[float] = mapped_column(Numeric(10, 2), default=0)
+    rating: Mapped[float | None] = mapped_column(Numeric(3, 2))
+    sales: Mapped[int | None] = mapped_column(Integer)
+    snapshot_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    source_sku_id: Mapped[str] = mapped_column(
+        String(100), nullable=False, comment="触发采集的本店 SKU ID"
+    )
