@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter
 
+from App.api.v1.ab_test import router as ab_test_router
 from App.api.v1.affiliate import router as affiliate_router
 from App.api.v1.alerts import router as alerts_router
 from App.api.v1.analysis import router as analysis_router
@@ -40,4 +41,5 @@ router.include_router(analysis_router, tags=["analysis"])
 router.include_router(reports_router, tags=["reports"])
 router.include_router(execution_router, tags=["execution"])
 router.include_router(competitors_router, tags=["competitors"])
+router.include_router(ab_test_router, tags=["ab-testing"])
 router.include_router(affiliate_router, tags=["affiliate"])
