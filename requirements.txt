@@ -36,3 +36,6 @@ PySocks>=1.7,<2.0
 
 # Task Scheduling
 apscheduler>=3.10,<4.0
+
+# PDF Report Generation
+fpdf2>=2.8,<3.0
