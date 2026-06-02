@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import { api } from '../api/client';
 import { useApp } from '../contexts/AppContext';
 import { ProductModal } from '../components/ProductModal';
+import { ImportModal } from '../components/ImportModal';
 import { CsvPreviewModal } from '../components/CsvPreviewModal';
 import { StoreProductModal } from '../components/StoreProductModal';
 import { PriceTrendChart } from '../components/PriceTrendChart';
@@ -54,7 +55,10 @@ export function Products() {
     open: boolean; mode: 'create' | 'edit'; product?: Product;
   }>({ open: false, mode: 'create' });
 
-  // csv preview modal state
+  // import modal
+  const [importModalOpen, setImportModalOpen] = useState(false);
+
+  // csv preview modal state (legacy)
   const [csvPreview, setCsvPreview] = useState<{
     open: boolean; products: Product[];
   }>({ open: false, products: [] });
@@ -64,6 +68,10 @@ export function Products() {
 
   // selected product for price trend
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+
+  // multi-select for export
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [exporting, setExporting] = useState(false);
 
   // ── 加载数据 ──
   async function loadProducts(filter?: string) {
@@ -194,7 +202,6 @@ export function Products() {
       if (result.failed_rows?.length) {
         result.failed_rows.forEach((r: any) => addToast(`行${r.row}: ${r.error}`, 'error'));
       }
-      // fetch all products to find newly imported ones (is_tracked=false)
       const allProducts = await api.get<Product[]>('/products/');
       const newProducts = allProducts.filter(p => !p.is_tracked);
       if (newProducts.length > 0) {
@@ -204,8 +211,50 @@ export function Products() {
     } catch (er: any) {
       addToast(er.message, 'error');
     }
-    // reset file input so same file can be re-uploaded
     if (fileInputRef.current) fileInputRef.current.value = '';
+  }
+
+  // ── 多选导出 ──
+  function toggleSelect(id: number) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (selectedIds.size === products.length && products.length > 0) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(products.map(p => p.id)));
+    }
+  }
+
+  async function handleExport() {
+    const ids = products.filter(p => selectedIds.has(p.id)).map(p => p.sku_id);
+    if (ids.length === 0) {
+      addToast('请先选择要导出的商品', 'info');
+      return;
+    }
+    setExporting(true);
+    try {
+      const res = await api.post<{ content: string; filename: string; count: number }>('/products/export', { sku_ids: ids });
+      // 下载 CSV
+      const blob = new Blob(['﻿' + res.content], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = res.filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      addToast(`已导出 ${res.count} 件商品`, 'success');
+    } catch (e: any) {
+      addToast(e.message || '导出失败', 'error');
+    }
+    setExporting(false);
   }
 
   // ── AI 解析费率 ──
@@ -276,8 +325,19 @@ export function Products() {
             <button onClick={handleCreateProduct} className="px-4 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">
               + 添加商品
             </button>
-            <button onClick={() => fileInputRef.current?.click()} className="px-4 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-700">
-              导入 CSV
+            <button onClick={() => setImportModalOpen(true)} className="px-4 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-700">
+              📥 导入
+            </button>
+            <button
+              onClick={handleExport}
+              disabled={selectedIds.size === 0 || exporting}
+              className={`px-4 py-1.5 rounded text-sm font-medium transition-all ${
+                selectedIds.size > 0
+                  ? 'bg-orange-500 text-white hover:bg-orange-600 shadow-sm'
+                  : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+              }`}
+            >
+              {exporting ? '导出中...' : `📤 导出所选 (${selectedIds.size})`}
             </button>
             <button onClick={() => setStoreModalOpen(true)} className="px-4 py-1.5 bg-purple-600 text-white rounded text-sm hover:bg-purple-700">
               获取店铺商品
@@ -295,14 +355,25 @@ export function Products() {
           </div>
           {products.length === 0 ? (
             <div className="bg-white rounded-lg shadow p-8 text-center text-gray-400">
-              暂无商品 — 点击「添加商品」或「导入 CSV」开始
+              暂无商品 — 点击「添加商品」或「导入」开始
             </div>
           ) : (
             <div className="bg-white rounded-lg shadow overflow-hidden">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-gray-50 text-gray-500 text-left">
-                    <th className="px-4 py-2 w-10">跟踪</th>
+                    <th className="px-4 py-2 w-10">
+                      <input
+                        type="checkbox"
+                        checked={products.length > 0 && selectedIds.size === products.length}
+                        onChange={toggleSelectAll}
+                        className="rounded"
+                        title="全选/取消全选"
+                      />
+                    </th>
+                    <th className="px-4 py-2 w-10">
+                      <span className="sr-only">跟踪</span>
+                    </th>
                     <th className="px-4 py-2">SKU ID</th>
                     <th className="px-4 py-2">名称</th>
                     <th className="px-4 py-2">成本 (USD)</th>
@@ -312,7 +383,17 @@ export function Products() {
                 </thead>
                 <tbody>
                   {products.map(p => (
-                    <tr key={p.id} className="border-t hover:bg-gray-50">
+                    <tr key={p.id} className={`border-t hover:bg-gray-50 transition-colors ${
+                      selectedIds.has(p.id) ? 'bg-blue-50/50' : ''
+                    }`}>
+                      <td className="px-4 py-2">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(p.id)}
+                          onChange={() => toggleSelect(p.id)}
+                          className="rounded"
+                        />
+                      </td>
                       <td className="px-4 py-2">
                         <button
                           onClick={() => handleToggleTracked(p)}
@@ -579,6 +660,14 @@ export function Products() {
         onSuccess={() => {
           loadProducts(trackedFilter);
           setProdModal({ open: false, mode: 'create' });
+        }}
+      />
+      <ImportModal
+        open={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        onSuccess={() => {
+          setImportModalOpen(false);
+          loadProducts(trackedFilter);
         }}
       />
       <CsvPreviewModal

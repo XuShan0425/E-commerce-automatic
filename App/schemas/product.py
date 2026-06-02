@@ -31,7 +31,14 @@ class CSVImportResult(BaseModel):
     """CSV 批量导入结果。"""
     total_rows: int
     success_count: int
-    failed_rows: list[dict]  # [{row: 行号, sku_id: "xxx", error: "错误描述"}, ...]
+    failed_rows: list[dict] = []  # [{row: 行号, sku_id: "xxx", error: "错误描述"}, ...]
+    preview_rows: list[dict] = []  # 预览模式返回的解析数据 [{row, sku_id, name, cost_price, category}]
+    missing_cost_price: bool = False  # 预览模式标记：文件中是否缺少成本价列
+
+
+class ExportRequest(BaseModel):
+    """商品导出请求。"""
+    sku_ids: list[str] | None = None
 
 
 class ProductToggleTracking(BaseModel):

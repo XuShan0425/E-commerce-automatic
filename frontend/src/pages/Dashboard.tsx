@@ -232,7 +232,7 @@ export function Dashboard() {
   // ── Derived data ────────────────────────
 
   const analysesList: SkuAnalysis[] = useMemo(() => {
-    if (aggregate) return aggregate.sku_analyses;
+    if (aggregate) return aggregate.sku_analyses || [];
     return legacyAnalyses.map(a => ({
       sku_id: a.sku_id,
       current_roi: a.current_roi,
@@ -252,7 +252,7 @@ export function Dashboard() {
 
   const trendData = useMemo(() => {
     if (aggregate && selectedSku === '__all__') {
-      return aggregate.roi_trend.map(d => ({
+      return (aggregate.roi_trend || []).map(d => ({
         date: d.date.slice(5),
         roi: d.roi,
       }));
@@ -262,7 +262,7 @@ export function Dashboard() {
 
   // 合并后的图表数据（历史 + 预测）
   const chartData = useMemo(() => {
-    if (!forecastData || !forecastData.forecast.length) {
+    if (!forecastData || !forecastData?.forecast?.length) {
       // 无预测数据时，仅显示历史 ROI 折线（兼容原行为）
       return trendData.map(d => ({
         date: d.date,
@@ -272,11 +272,17 @@ export function Dashboard() {
         upper_bound: null,
       }));
     }
-    return mergeChartData(forecastData.historical, forecastData.forecast);
+    return mergeChartData(forecastData.historical || [], forecastData.forecast || []);
   }, [trendData, forecastData]);
 
   const alertsSummary: AlertSummary = useMemo(() => {
-    if (aggregate) return aggregate.alerts_summary;
+    if (aggregate) {
+      const as = aggregate.alerts_summary;
+      return {
+        total_unresolved: as?.total_unresolved ?? 0,
+        by_severity: (as?.by_severity ?? []) as SeverityCount[],
+      };
+    }
     const bySeverityMap: Record<string, number> = {};
     legacyAlerts.forEach(a => {
       bySeverityMap[a.severity] = (bySeverityMap[a.severity] || 0) + 1;
@@ -288,11 +294,11 @@ export function Dashboard() {
   }, [aggregate, legacyAlerts]);
 
   const summary = useMemo(() => {
-    if (aggregate) {
+    if (aggregate?.summary) {
       return {
-        skuCount: aggregate.summary.total_sku_count,
-        avgRoi: aggregate.summary.avg_roi,
-        avgMargin: aggregate.summary.avg_gross_margin,
+        skuCount: aggregate.summary.total_sku_count ?? 0,
+        avgRoi: aggregate.summary.avg_roi ?? 0,
+        avgMargin: aggregate.summary.avg_gross_margin ?? 0,
       };
     }
     const totalRoi = legacyAnalyses.reduce((s, a) => s + a.current_roi, 0);
@@ -410,7 +416,7 @@ export function Dashboard() {
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="date" fontSize={12} />
               <YAxis fontSize={12} />
-              <Tooltip formatter={(v: number | null) => v != null ? v.toFixed(3) : '-'} />
+              <Tooltip formatter={(v: any) => v != null ? Number(v).toFixed(3) : '-'} />
               {/* 置信区间阴影 */}
               {hasForecast && (
                 <Area

@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import csv
 import io
+import re
+from datetime import datetime, timezone
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from sqlalchemy import select, update
@@ -16,6 +19,7 @@ from App.core.security import verify_api_key
 from App.models.base import Product
 from App.schemas.product import (
     CSVImportResult,
+    ExportRequest,
     ProductCreate,
     ProductRead,
     ProductToggleTracking,
@@ -203,7 +207,7 @@ async def batch_track(
     return {"status": "ok", "tracked_count": len(tracked_ids)}
 
 
-# ── CSV 批量导入 ─────────────────────────────────
+# ── 批量导入 (CSV + XLSX) ──────────────────────
 
 def _detect_delimiter(sample: str) -> str:
     """自动检测 CSV 分隔符（逗号或制表符）。"""
@@ -213,94 +217,247 @@ def _detect_delimiter(sample: str) -> str:
     return "\t" if tabs > commas else ","
 
 
-def _parse_csv_content(content: str) -> list[dict]:
-    """解析 CSV 内容为 list[dict]。返回 (parsed_rows, errors)。"""
+def _normalize_columns(field_names: list[str]) -> tuple[dict[str, str], set[str]]:
+    """标准化列名：去空格、转小写、别名映射。返回 (field_map, mapped_fields)。"""
+    ALIASES = {
+        "sku": "sku_id", "商品id": "sku_id", "商品编号": "sku_id",
+        "product": "sku_id", "product_id": "sku_id",
+        "id": "sku_id",
+        "商品名称": "name", "商品名": "name", "product_name": "name",
+        "*商品标题": "name", "商品标题": "name",
+        "成本": "cost_price", "成本价": "cost_price", "价格": "cost_price",
+        "*货值(usd)": "cost_price", "*货值": "cost_price",
+        "类目": "category", "分类": "category", "品类": "category",
+        "*零售价(usd)": "price", "*零售价": "price",
+    }
+    field_map: dict[str, str] = {}
+    for fn in field_names:
+        key = fn.strip().lower().replace(" ", "_").replace("-", "_")
+        if key in ALIASES:
+            key = ALIASES[key]
+        field_map[fn] = key
+    return field_map, set(field_map.values())
+
+
+def _parse_csv_rows(content: str) -> list[dict]:
+    """解析 CSV 内容为 list[dict]。"""
     delimiter = _detect_delimiter(content)
     reader = csv.DictReader(io.StringIO(content), delimiter=delimiter)
-
-    # 标准化列名（去除前后空格、转为小写）
     if reader.fieldnames is None:
-        raise ValueError("CSV 文件没有表头")
-
-    field_map: dict[str, str] = {}
-    for fn in reader.fieldnames:
-        key = fn.strip().lower()
-        field_map[fn] = key
-
+        raise ValueError("文件没有表头")
+    field_map, mapped_fields = _normalize_columns(reader.fieldnames)
     required = {"sku_id", "name", "cost_price"}
-    mapped_fields = set(field_map.values())
     missing = required - mapped_fields
     if missing:
-        raise ValueError(f"CSV 缺少必填列: {', '.join(missing)}。需要: sku_id, name, cost_price")
-
+        raise ValueError(
+            f"缺少必填列: {', '.join(missing)}。\n"
+            f"需要: sku_id, name, cost_price\n"
+            f"当前表头: {', '.join(reader.fieldnames)}"
+        )
     rows: list[dict] = []
     for row in reader:
-        mapped_row: dict[str, str] = {}
+        mapped: dict[str, str] = {}
         for original_key, value in row.items():
-            mapped_row[field_map[original_key]] = value.strip()
-        rows.append(mapped_row)
-
+            mapped[field_map.get(original_key, original_key.strip().lower())] = (value or "").strip()
+        rows.append(mapped)
     return rows
 
 
-@router.post("/import-csv", response_model=CSVImportResult)
-async def import_csv(
+def _parse_xlsx_rows(file_bytes: bytes) -> list[dict]:
+    """解析速卖通导出 XLSX 为 list[dict]。
+
+    兼容两种格式：
+    - 商品信息（类目+SPU级别）：id(→sku_id), *商品标题(→name)
+    - SKU信息（规格级别）：id(→sku_id), *商品标题(→name), *零售价(USD)
+    每个 sheet 为一个类目，自动去重（按商品 id）。
+
+    注意：导出文件不包含成本价（cost_price），导入时前端会提示用户统一输入。
+    """
+    try:
+        import openpyxl
+    except ImportError:
+        raise ValueError("不支持 XLSX 格式，请安装 openpyxl: pip install openpyxl")
+
+    wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
+
+    ALL_ALIASES = {
+        "id": "sku_id", "sku": "sku_id",
+        "*商品标题": "name", "商品标题": "name", "商品名称": "name",
+    }
+
+    seen_sku = set()
+    all_rows: list[dict] = []
+    total_data_rows = 0
+
+    for sname in wb.sheetnames:
+        if "_hide" in sname:  # 跳过隐藏表
+            continue
+        ws = wb[sname]
+        if ws.max_row < 2:
+            continue
+
+        # 读取表头（第2行）
+        headers_raw: list[str] = []
+        for col in range(1, ws.max_column + 1):
+            v = ws.cell(row=2, column=col).value
+            headers_raw.append(str(v).strip() if v else "")
+
+        # 标准化表头
+        field_map: dict[int, str] = {}
+        mapped_set: set[str] = set()
+        for col_idx, raw in enumerate(headers_raw):
+            key = raw.lower().replace(" ", "_").replace("-", "_")
+            key = ALL_ALIASES.get(key, key)
+            field_map[col_idx] = key
+            mapped_set.add(key)
+
+        has_cost = "cost_price" in mapped_set
+
+        # 读取数据行（第3行起）
+        for row_idx in range(3, ws.max_row + 1):
+            # 检查是否全空行
+            row_vals: list[str] = []
+            has_any = False
+            for col in range(1, ws.max_column + 1):
+                v = ws.cell(row=row_idx, column=col).value
+                s = ""
+                if v is not None:
+                    if isinstance(v, float):
+                        s = str(int(v)) if v == int(v) else str(v)
+                    else:
+                        s = str(v).strip()
+                    if s:
+                        has_any = True
+                row_vals.append(s)
+
+            if not has_any:
+                continue
+
+            total_data_rows += 1
+
+            # 构建行 dict
+            row_dict: dict[str, str] = {}
+            for col_idx, key in field_map.items():
+                val = row_vals[col_idx] if col_idx < len(row_vals) else ""
+                if key in row_dict:
+                    # 同名列已存在，取非空值
+                    if val and not row_dict[key]:
+                        row_dict[key] = val
+                else:
+                    row_dict[key] = val
+
+            sku_id = row_dict.get("sku_id", "")
+            if not sku_id:
+                continue
+
+            # 去重：相同 sku_id 只保留第一次出现
+            if sku_id in seen_sku:
+                continue
+            seen_sku.add(sku_id)
+
+            # 填入类目
+            if not row_dict.get("category"):
+                row_dict["category"] = sname
+
+            all_rows.append(row_dict)
+
+    wb.close()
+
+    if total_data_rows == 0:
+        raise ValueError("文件中没有数据行")
+
+    if not all_rows:
+        raise ValueError(
+            f"文件中没有找到有效商品数据（共 {total_data_rows} 行，"
+            f"但缺少 sku_id 列或所有行均为空）"
+        )
+
+    return all_rows
+
+
+@router.post("/import", response_model=CSVImportResult)
+async def import_products(
     file: UploadFile,
+    preview: bool = Query(False, description="预览模式：仅解析返回数据，不写入数据库"),
+    default_cost_price: float | None = Query(None, description="XLSX 中无成本价时使用的默认值"),
     _api_key: str = Depends(verify_api_key),
     db: AsyncSession = Depends(get_db),
 ) -> CSVImportResult:
-    """通过 CSV 文件批量导入商品。
+    """批量导入商品 — 支持 CSV / TSV / XLSX（含速卖通导出格式）。
 
-    CSV 格式（首行为列名）：
-    ```
-    sku_id,name,cost_price,category
-    SKU001,蓝牙耳机,5.00,Electronics
-    SKU002,手机壳,1.50,Accessories
-    ```
-
-    支持逗号 (,) 和制表符 (Tab) 分隔。
+    自动检测文件格式和分隔符，支持列名别名（id→sku_id, *商品标题→name 等）。
+    XLSX 支持多 sheet 类目自动归类、SKU 级别去重。
+    设置 ?preview=true 可预览解析结果而不写入数据库。
     """
-    # 验证文件类型
-    if file.filename and not file.filename.lower().endswith((".csv", ".tsv", ".txt")):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="仅支持 CSV/TSV/TXT 文件",
-        )
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="文件为空")
 
-    # 读取文件内容
-    try:
-        raw = await file.read()
-        # 尝试 UTF-8，失败则尝试 GBK
+    fname = file.filename or "unknown"
+    ext = fname.lower().rsplit(".", 1)[-1] if "." in fname else ""
+
+    if ext in ("xlsx", "xls"):
+        try:
+            rows = _parse_xlsx_rows(raw)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+    elif ext in ("csv", "tsv", "txt"):
         try:
             content = raw.decode("utf-8-sig")
         except UnicodeDecodeError:
-            content = raw.decode("gbk")
-    except Exception as exc:
+            try:
+                content = raw.decode("gbk")
+            except UnicodeDecodeError:
+                raise HTTPException(status_code=400, detail="文件编码无法识别，请使用 UTF-8 或 GBK")
+        try:
+            rows = _parse_csv_rows(content)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+    else:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"无法读取文件内容: {exc}",
-        ) from exc
-
-    # 解析 CSV
-    try:
-        rows = _parse_csv_content(content)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
+            status_code=400,
+            detail=f"不支持的文件格式 (.{ext})。支持: CSV, TSV, TXT, XLSX",
+        )
 
     total_rows = len(rows)
+    if total_rows == 0:
+        raise HTTPException(status_code=400, detail="文件中没有数据行")
+
+    # 预览模式：返回解析结果但不写入
+    if preview:
+        has_cost_col = any("cost_price" in r for r in rows) or any(
+            r.get("cost_price", "").strip() for r in rows
+        )
+        preview_rows = [
+            {
+                "row": idx,
+                "sku_id": r.get("sku_id", ""),
+                "name": r.get("name", ""),
+                "cost_price": r.get("cost_price", ""),
+                "category": r.get("category", ""),
+            }
+            for idx, r in enumerate(rows, start=2)
+        ]
+        result = CSVImportResult(
+            total_rows=total_rows,
+            success_count=0,
+            failed_rows=[],
+            preview_rows=preview_rows,
+        )
+        # 标记是否缺少成本价（前端可据此显示默认价格输入框）
+        if not has_cost_col:
+            result.missing_cost_price = True
+        return result
+
     success_count = 0
     failed_rows: list[dict] = []
 
-    for idx, row in enumerate(rows, start=2):  # 第2行开始（第1行是表头）
-        sku_id = row.get("sku_id", "")
-        name = row.get("name", "")
-        cost_price_str = row.get("cost_price", "0")
+    for idx, row in enumerate(rows, start=2):
+        sku_id = (row.get("sku_id") or "").strip()
+        name = (row.get("name") or "").strip()
+        cost_price_raw = (row.get("cost_price") or "").strip()
         category = row.get("category") or None
 
-        # 校验必填字段
         if not sku_id:
             failed_rows.append({"row": idx, "sku_id": "", "error": "sku_id 为空"})
             continue
@@ -308,35 +465,30 @@ async def import_csv(
             failed_rows.append({"row": idx, "sku_id": sku_id, "error": "name 为空"})
             continue
 
-        # 校验 cost_price 为数字
-        try:
-            cost_price = float(cost_price_str)
-        except (ValueError, TypeError):
-            failed_rows.append({
-                "row": idx,
-                "sku_id": sku_id,
-                "error": f"cost_price 无效: {cost_price_str}",
-            })
-            continue
-
+        # 如果行内没有成本价，使用默认值
+        if not cost_price_raw:
+            if default_cost_price is not None:
+                cost_price = default_cost_price
+            else:
+                failed_rows.append({"row": idx, "sku_id": sku_id, "error": "缺少成本价，请在导入时指定默认成本价"})
+                continue
+        else:
+            cleaned = re.sub(r'[¥$€\s,]', '', cost_price_raw)
+            try:
+                cost_price = float(cleaned)
+            except (ValueError, TypeError):
+                failed_rows.append({"row": idx, "sku_id": sku_id, "error": f"成本价无效: {cost_price_raw}"})
+                continue
         if cost_price <= 0:
             failed_rows.append({"row": idx, "sku_id": sku_id, "error": "cost_price 必须大于 0"})
             continue
 
-        # 检查是否已存在
         existing = await db.execute(select(Product).where(Product.sku_id == sku_id))
         if existing.scalar_one_or_none() is not None:
             failed_rows.append({"row": idx, "sku_id": sku_id, "error": "SKU ID 已存在"})
             continue
 
-        # 创建商品
-        product = Product(
-            sku_id=sku_id,
-            name=name,
-            cost_price=cost_price,
-            category=category,
-        )
-        db.add(product)
+        db.add(Product(sku_id=sku_id, name=name, cost_price=cost_price, category=category))
         try:
             await db.flush()
             success_count += 1
@@ -344,8 +496,54 @@ async def import_csv(
             await db.rollback()
             failed_rows.append({"row": idx, "sku_id": sku_id, "error": "数据库写入冲突"})
 
-    return CSVImportResult(
-        total_rows=total_rows,
-        success_count=success_count,
-        failed_rows=failed_rows,
-    )
+    return CSVImportResult(total_rows=total_rows, success_count=success_count, failed_rows=failed_rows)
+
+
+@router.post("/import-csv", response_model=CSVImportResult)
+async def import_csv_legacy(
+    file: UploadFile,
+    _api_key: str = Depends(verify_api_key),
+    db: AsyncSession = Depends(get_db),
+) -> CSVImportResult:
+    """(旧接口) 通过 CSV 文件批量导入商品 — 重定向到新版 /import。"""
+    return await import_products(file=file, _api_key=_api_key, db=db)
+
+
+# ── 导出 ────────────────────────────────────────
+
+@router.post("/export")
+async def export_products(
+    body: ExportRequest | None = None,
+    _api_key: str = Depends(verify_api_key),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """导出商品为 CSV。支持中文表头，可直接在 Excel 中打开。
+
+    如果提供 sku_ids 则仅导出选中商品，否则导出全部。
+    """
+    sku_ids = body.sku_ids if body else None
+    stmt = select(Product).order_by(Product.created_at.desc())
+    if sku_ids:
+        stmt = stmt.where(Product.sku_id.in_(sku_ids))
+    result = await db.execute(stmt)
+    products = result.scalars().all()
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["SKU ID", "商品名称", "成本价(USD)", "类目", "是否跟踪", "创建时间"])
+    for p in products:
+        writer.writerow([
+            p.sku_id,
+            p.name,
+            float(p.cost_price),
+            p.category or "",
+            "是" if p.is_tracked else "否",
+            p.created_at.strftime("%Y-%m-%d %H:%M:%S") if p.created_at else "",
+        ])
+
+    return {
+        "status": "ok",
+        "filename": f"商品导出_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.csv",
+        "content": buf.getvalue(),
+        "count": len(products),
+    }

@@ -5,7 +5,6 @@ from fastapi import APIRouter
 from App.api.v1.ab_test import router as ab_test_router
 from App.api.v1.affiliate import router as affiliate_router
 from App.api.v1.alerts import router as alerts_router
-from App.api.v1.platform import router as platform_router
 from App.api.v1.analysis import router as analysis_router
 from App.api.v1.auth import api_key_router, user_router
 from App.api.v1.auth_flow import router as auth_flow_router
@@ -15,8 +14,10 @@ from App.api.v1.competitors import router as competitors_router
 from App.api.v1.dashboard import router as dashboard_router
 from App.api.v1.execution import router as execution_router
 from App.api.v1.health import router as health_router
+from App.api.v1.import_from_aliexpress import router as import_router
 from App.api.v1.logistics_rates import router as logistics_rates_router
 from App.api.v1.monitoring import router as monitoring_router
+from App.api.v1.platform import router as platform_router
 from App.api.v1.platform_fees import router as platform_fees_router
 from App.api.v1.price_snapshots import router as price_snapshots_router
 from App.api.v1.products import router as products_router
@@ -51,5 +52,6 @@ router.include_router(ab_test_router, tags=["ab-testing"])
 router.include_router(affiliate_router, tags=["affiliate"])
 router.include_router(platform_router, tags=["platforms"])
 router.include_router(monitoring_router, tags=["monitoring"])
+router.include_router(import_router)
 router.include_router(price_snapshots_router, tags=["price-snapshots"])
 router.include_router(dashboard_router, tags=["dashboard"])
