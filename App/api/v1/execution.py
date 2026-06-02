@@ -1,8 +1,11 @@
-"""执行层 API — 触发执行 + 待确认管理 + 操作日志查询."""
+"""执行层 API — 触发执行 + 待确认管理 + 操作日志查询 + 活动管理."""
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from App.core.database import get_db
@@ -12,6 +15,14 @@ from App.core.security import verify_api_key
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/execution", tags=["execution"])
+
+
+# ── 活动管理请求模型 ──────────────────────────────
+
+
+class CampaignActionRequest(BaseModel):
+    """活动管理请求体。"""
+    sku_id: str
 
 
 # ── 执行触发 ────────────────────────────────────
@@ -211,3 +222,155 @@ async def get_execution_logs(
         }
         for log in logs
     ]
+
+
+# ── 活动管理 ──────────────────────────────────────
+
+
+@router.post("/campaign/pause")
+async def api_pause_campaign(
+    body: CampaignActionRequest,
+    _api_key: str = Depends(verify_api_key),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """暂停指定 SKU 的推广活动。"""
+    from App.services.operation_logger import log_operation
+
+    try:
+        exec_result = await _run_campaign_sync(db, "pause_campaign", body.sku_id)
+
+        await log_operation(
+            db, body.sku_id, "pause_campaign",
+            status="success" if exec_result.get("success") else "failed",
+            details={"adjuster_result": exec_result},
+        )
+
+        if not exec_result.get("success"):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=exec_result.get("error", "暂停活动失败"),
+            )
+
+        return {"status": "ok", "operation": "pause_campaign", "sku_id": body.sku_id, "adjuster_result": exec_result}
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("pause_campaign API 异常: SKU=%s", body.sku_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"暂停活动失败: {exc}",
+        ) from exc
+
+
+@router.post("/campaign/resume")
+async def api_resume_campaign(
+    body: CampaignActionRequest,
+    _api_key: str = Depends(verify_api_key),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """恢复指定 SKU 已暂停的推广活动。"""
+    from App.services.operation_logger import log_operation
+
+    try:
+        exec_result = await _run_campaign_sync(db, "resume_campaign", body.sku_id)
+
+        await log_operation(
+            db, body.sku_id, "resume_campaign",
+            status="success" if exec_result.get("success") else "failed",
+            details={"adjuster_result": exec_result},
+        )
+
+        if not exec_result.get("success"):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=exec_result.get("error", "恢复活动失败"),
+            )
+
+        return {"status": "ok", "operation": "resume_campaign", "sku_id": body.sku_id, "adjuster_result": exec_result}
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("resume_campaign API 异常: SKU=%s", body.sku_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"恢复活动失败: {exc}",
+        ) from exc
+
+
+@router.post("/campaign/stop")
+async def api_stop_campaign(
+    body: CampaignActionRequest,
+    _api_key: str = Depends(verify_api_key),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """停止指定 SKU 的推广活动（软边界操作，需要人工确认）。
+
+    此操作会触发软边界检查，写入待确认日志并发送警报。
+    人工确认后通过 POST /execution/pending/{log_id}/confirm 执行。
+    """
+    from App.services.operation_logger import log_operation
+    from App.services.alert_service import raise_alert
+
+    try:
+        # 写入待确认操作日志（软边界暂停）
+        log = await log_operation(
+            db, body.sku_id, "stop_campaign",
+            status="pending_confirmation",
+            details={
+                "boundary_type": "soft",
+                "reason": "决定关闭推广活动，需要人工确认",
+                "sku_id": body.sku_id,
+            },
+        )
+
+        # 发送警报
+        await raise_alert(
+            db,
+            "execution_pending",
+            f"[{body.sku_id}] 关闭推广活动需要人工确认",
+            severity="warning",
+        )
+
+        logger.info("stop_campaign 已暂停等待确认: SKU=%s log_id=%d", body.sku_id, log.id)
+
+        return {
+            "status": "pending_confirmation",
+            "operation": "stop_campaign",
+            "sku_id": body.sku_id,
+            "operation_log_id": log.id,
+            "message": f"关闭推广活动需要人工确认，请访问 POST /execution/pending/{log.id}/confirm 确认执行",
+        }
+
+    except Exception as exc:
+        logger.exception("stop_campaign API 异常: SKU=%s", body.sku_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"停止活动失败: {exc}",
+        ) from exc
+
+
+async def _run_campaign_sync(
+    db: AsyncSession,
+    operation: str,
+    sku_id: str,
+) -> dict:
+    """在后台线程中同步执行活动管理浏览器操作。"""
+    from App.services.adjuster import run_executor
+    from App.services.browser import BrowserService
+    from App.services.cookie_manager import CookieManager
+
+    cookie_mgr = CookieManager(db)
+    cookies = await cookie_mgr.load_cookies("aliexpress.com")
+
+    loop = asyncio.get_event_loop()
+
+    def _sync_execute() -> dict:
+        browser_svc = BrowserService(headless=True)
+        try:
+            return run_executor(operation, browser_svc, sku_id=sku_id, cookies=cookies)
+        finally:
+            browser_svc.close()
+
+    return await loop.run_in_executor(None, _sync_execute)

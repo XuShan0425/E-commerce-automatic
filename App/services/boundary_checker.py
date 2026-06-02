@@ -106,13 +106,13 @@ async def check_boundaries(
 
     # ── 软边界 1: 关闭推广活动需要人工确认 ─────────
     decision_type = decision.get("decision_type", "")
-    if decision_type == "stop_ad":
+    if decision_type in ("stop_ad", "stop_campaign"):
         reasons.append("决定关闭推广活动，需要人工确认")
         return BoundaryResult(
             passed=False,
             boundary_type="soft",
             reason="; ".join(reasons),
-            details={"decision_type": "stop_ad"},
+            details={"decision_type": decision_type},
         )
 
     # ── 软边界 2: requires_confirmation ──────────

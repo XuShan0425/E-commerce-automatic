@@ -239,7 +239,7 @@ async def _run_adjuster(
         kwargs["new_price"] = action.get("new_value", 0)
     elif decision_type == "switch_ad_type":
         kwargs["new_type"] = action.get("new_value", "standard")
-    # stop_ad 不需要额外参数
+    # stop_ad / pause_campaign / resume_campaign / stop_campaign 仅需 sku_id
 
     # 防御性验证 — 执行前再次确认 cookie 有效
     if not cookies:

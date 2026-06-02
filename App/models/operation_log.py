@@ -23,7 +23,7 @@ class OperationLog(AsyncAttrs, Base):
     operation_type: Mapped[str] = mapped_column(
         String(50), nullable=False, default="adjust_bid"
     )
-    # adjust_bid | adjust_price | switch_ad_type | stop_ad | no_action
+    # adjust_bid | adjust_price | switch_ad_type | stop_ad | pause_campaign | resume_campaign | stop_campaign | no_action
     field_name: Mapped[str | None] = mapped_column(String(50))
     # daily_budget | price | ad_type
     old_value: Mapped[float | None] = mapped_column(Numeric(10, 2))
