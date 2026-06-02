@@ -1,4 +1,4 @@
-"""分析管线 — 串联 profit_calculator → decision_engine → boundary_checker."""
+"""分析管线 — 串联 profit_calculator → decision_engine → boundary_checker → roi_forecaster."""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ from App.services.profit_calculator import (
     _get_product,
     compute_profit,
 )
+from App.services.roi_forecaster import forecast_roi
 
 logger = get_logger(__name__)
 
@@ -50,6 +51,7 @@ async def analyze_single_sku(
         "analyzed_at": datetime.now(UTC).isoformat(),
         "success": False,
         "profit": None,
+        "forecast": None,
         "decision": None,
         "boundary": None,
         "error": None,
@@ -74,6 +76,22 @@ async def analyze_single_sku(
             "current_roi": float(profit.current_roi),
             "roi_7d_trend": profit.roi_7d_trend,
         }
+
+        # ── Step 1.5: ROI 预测 ───────────────────────
+        try:
+            forecast = await forecast_roi(db, sku_id, days_ahead=7)
+            result["forecast"] = forecast
+        except Exception as exc:
+            result["forecast"] = {
+                "sku_id": sku_id,
+                "warning": f"ROI 预测失败: {exc}",
+                "forecast": [],
+                "historical": [],
+                "trend_direction": "unknown",
+                "regression": None,
+            }
+            logger.warning("ROI 预测异常 (SKU=%s): %s", sku_id, exc)
+
     except Exception as exc:
         result["error"] = f"利润计算失败: {exc}"
         logger.exception("利润计算失败: SKU=%s", sku_id)

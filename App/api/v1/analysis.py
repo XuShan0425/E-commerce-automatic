@@ -161,3 +161,24 @@ async def get_latest_analysis(
     ]
     await set_cache(cache_key, serializable, ttl=30)
     return [ProfitAnalysisRead.model_validate(r) for r in records]
+
+
+@router.get("/{sku_id}/forecast")
+async def get_roi_forecast(
+    sku_id: str,
+    days_ahead: int = Query(7, ge=1, le=30, description="预测未来天数"),
+    _api_key: str = Depends(verify_api_key),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """获取指定 SKU 的 ROI 预测（带置信区间）。"""
+    from App.services.roi_forecaster import forecast_roi as _forecast_roi
+
+    try:
+        forecast = await _forecast_roi(db, sku_id, days_ahead=days_ahead)
+        return {"status": "ok", **forecast}
+    except Exception as exc:
+        logger.exception("ROI 预测失败: SKU=%s", sku_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"ROI 预测失败: {exc}",
+        ) from exc
