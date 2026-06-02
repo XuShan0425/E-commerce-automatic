@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from typing import Any
@@ -16,6 +17,7 @@ logger = get_logger(__name__)
 
 # URL 和模型从 settings 读取，硬编码仅作为 fallback
 ANTHROPIC_API_VERSION = "2023-06-01"
+_WATCHDOG_INTERVAL = 30  # 看门狗日志间隔（秒）
 
 RATE_PARSING_SYSTEM_PROMPT = """\
 你是一个数据提取专家。我会给你一段来自速卖通(AliExpress)卖家帮助中心的 HTML 页面内容。
@@ -30,19 +32,51 @@ RATE_PARSING_SYSTEM_PROMPT = """\
 """
 
 
+async def _watchdog(sku_id: str | None, start_time: float, deadline: float, cancel_event: asyncio.Event) -> None:
+    """看门狗：每隔 _WATCHDOG_INTERVAL 秒输出一次心跳日志，超 deadline 则触发取消。"""
+    while True:
+        elapsed = time.perf_counter() - start_time
+        remaining = deadline - time.perf_counter()
+        if remaining <= 0:
+            logger.warning(
+                "AI 调用超过硬截止时间 (%.0fs)，已取消 sku=%s",
+                elapsed, sku_id or "?",
+            )
+            cancel_event.set()
+            return
+        logger.info(
+            "AI 调用进行中 — 已等待 %.0fs，剩余 %.0fs sku=%s",
+            elapsed, remaining, sku_id or "?",
+        )
+        try:
+            await asyncio.wait_for(
+                cancel_event.wait(),
+                timeout=min(_WATCHDOG_INTERVAL, remaining),
+            )
+            # cancel_event.wait() 正常返回 = 被通知退出
+            return
+        except asyncio.TimeoutError:
+            continue
+
+
 async def _call_claude(
     prompt: str,
     system_prompt: str = RATE_PARSING_SYSTEM_PROMPT,
     max_tokens: int = 4096,
     temperature: float = 0.1,
+    sku_id: str | None = None,
 ) -> str:
     """调用 Claude API，返回文本响应。
+
+    内置看门狗机制：如果调用卡住（无数据返回），每 30s 输出一条心跳日志，
+    超过 LLM_API_TIMEOUT_TOTAL 秒后强制取消。
 
     Args:
         prompt: 用户消息内容（包含待解析的 HTML）
         system_prompt: 系统提示词
         max_tokens: 最大输出 token 数
         temperature: 生成温度（低温度 = 更确定的输出）
+        sku_id: 可选，标识是哪个 SKU 在调用，用于日志关联
 
     Returns:
         Claude 的文本响应
@@ -50,6 +84,7 @@ async def _call_claude(
     Raises:
         ValueError: API Key 未配置
         httpx.HTTPError: API 调用失败
+        asyncio.TimeoutError: 超过硬截止时间
     """
     if not settings.LLM_API_KEY:
         raise ValueError("LLM_API_KEY 未配置，请在 .env 中设置")
@@ -71,14 +106,44 @@ async def _call_claude(
     }
 
     t_start = time.perf_counter()
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        response = await client.post(
-            f"{settings.LLM_API_BASE_URL}/v1/messages",
-            headers=headers,
-            json=body,
+    cancel_event = asyncio.Event()
+    deadline = t_start + settings.LLM_API_TIMEOUT_TOTAL
+
+    # 启动看门狗
+    watchdog_task = asyncio.create_task(
+        _watchdog(sku_id, t_start, deadline, cancel_event)
+    )
+
+    try:
+        timeout = httpx.Timeout(
+            connect=settings.LLM_API_TIMEOUT_CONNECT,
+            read=settings.LLM_API_TIMEOUT_READ,
+            write=30.0,
+            pool=10.0,
         )
-        response.raise_for_status()
-        data = response.json()
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            # 用 asyncio.wait_for 套一层硬截止
+            response = await asyncio.wait_for(
+                client.post(
+                    f"{settings.LLM_API_BASE_URL}/v1/messages",
+                    headers=headers,
+                    json=body,
+                ),
+                timeout=settings.LLM_API_TIMEOUT_TOTAL,
+            )
+            response.raise_for_status()
+            data = response.json()
+    except asyncio.CancelledError:
+        raise asyncio.TimeoutError(
+            f"AI 调用超时 ({settings.LLM_API_TIMEOUT_TOTAL}s) — "
+            f"api={settings.LLM_API_BASE_URL} sku={sku_id or '?'}"
+        )
+    except Exception:
+        raise
+    finally:
+        cancel_event.set()  # 通知看门狗退出
+        await watchdog_task
+
     latency_ms = round((time.perf_counter() - t_start) * 1000)
 
     usage = data.get("usage", {})
@@ -105,6 +170,7 @@ async def parse_html_to_json(
     html: str,
     output_schema: dict[str, Any],
     extraction_goal: str = "提取所有费率数据",
+    sku_id: str | None = None,
 ) -> dict[str, Any]:
     """将 HTML 页面解析为结构化 JSON。
 
@@ -134,7 +200,7 @@ async def parse_html_to_json(
 ---
 """
 
-    raw_response = await _call_claude(prompt)
+    raw_response = await _call_claude(prompt, sku_id=sku_id)
     logger.debug("Claude raw response (first 500 chars): %s", raw_response[:500])
 
     # Claude 可能返回带 ```json ... ``` 包裹的 JSON，去掉包裹标记

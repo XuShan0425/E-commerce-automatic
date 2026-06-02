@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from App.core.logging import get_logger
 from App.models.base import PriceSnapshot, Product
+from App.core.database import async_session_factory
 from App.services.boundary_checker import check_boundaries
 from App.services.decision_engine import generate_decision
 from App.services.profit_calculator import (
@@ -187,7 +188,11 @@ async def analyze_all_skus(
 
     async def _analyze_one(product: Product) -> dict[str, Any]:
         async with sem:
-            return await analyze_single_sku(db, product.sku_id, skip_ai=skip_ai)
+            async with async_session_factory() as task_db:
+                try:
+                    return await analyze_single_sku(task_db, product.sku_id, skip_ai=skip_ai)
+                finally:
+                    await task_db.commit()
 
     tasks = [_analyze_one(product) for product in products]
     for coro in asyncio.as_completed(tasks):

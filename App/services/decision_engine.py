@@ -198,6 +198,7 @@ async def generate_decision(
         system_prompt=DECISION_SYSTEM_PROMPT,
         max_tokens=2048,
         temperature=0.3,
+        sku_id=sku_id,
     )
 
     decision = _parse_decision_response(raw_response)
