@@ -67,8 +67,14 @@ export function Reports() {
           className="flex-1 max-w-sm px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-sm"
         />
         <button
-          onClick={() => loadHistory(skuId)}
-          disabled={!skuId.trim() || loading}
+          onClick={() => {
+            if (!skuId.trim()) {
+              addToast('请输入 SKU ID', 'info');
+              return;
+            }
+            loadHistory(skuId);
+          }}
+          disabled={loading}
           className="px-6 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
         >
           {loading ? '加载中...' : '查询'}

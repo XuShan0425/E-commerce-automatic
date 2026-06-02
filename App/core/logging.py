@@ -37,19 +37,28 @@ class JsonFormatter(logging.Formatter):
 
 
 class StructuredLogger(logging.Logger):
-    def info(self, msg: str, extra: dict[str, Any] | None = None, **kwargs: Any) -> None:
-        self._log_with_extra(logging.INFO, msg, extra, **kwargs)
+    def info(self, msg: str, *args: Any, extra: dict[str, Any] | None = None, **kwargs: Any) -> None:
+        self._log_with_extra(logging.INFO, msg, args, extra, **kwargs)
 
-    def warn(self, msg: str, extra: dict[str, Any] | None = None, **kwargs: Any) -> None:
-        self._log_with_extra(logging.WARNING, msg, extra, **kwargs)
+    def warn(self, msg: str, *args: Any, extra: dict[str, Any] | None = None, **kwargs: Any) -> None:
+        self._log_with_extra(logging.WARNING, msg, args, extra, **kwargs)
 
-    def error(self, msg: str, extra: dict[str, Any] | None = None, **kwargs: Any) -> None:
-        self._log_with_extra(logging.ERROR, msg, extra, **kwargs)
+    def error(self, msg: str, *args: Any, extra: dict[str, Any] | None = None, **kwargs: Any) -> None:
+        self._log_with_extra(logging.ERROR, msg, args, extra, **kwargs)
 
-    def debug(self, msg: str, extra: dict[str, Any] | None = None, **kwargs: Any) -> None:
-        self._log_with_extra(logging.DEBUG, msg, extra, **kwargs)
+    def debug(self, msg: str, *args: Any, extra: dict[str, Any] | None = None, **kwargs: Any) -> None:
+        self._log_with_extra(logging.DEBUG, msg, args, extra, **kwargs)
 
-    def _log_with_extra(self, level: int, msg: str, extra: dict[str, Any] | None, **kwargs: Any) -> None:
+    def exception(self, msg: str, *args: Any, extra: dict[str, Any] | None = None, **kwargs: Any) -> None:
+        kwargs.setdefault("exc_info", True)
+        self._log_with_extra(logging.ERROR, msg, args, extra, **kwargs)
+
+    def _log_with_extra(self, level: int, msg: str, args: tuple = (), extra: dict[str, Any] | None = None, **kwargs: Any) -> None:
+        if args:
+            try:
+                msg = msg % args
+            except (TypeError, ValueError):
+                pass
         record = logging.LogRecord(
             name=self.name,
             level=level,

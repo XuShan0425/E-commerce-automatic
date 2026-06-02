@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     LLM_API_KEY: str = ""
     LLM_API_BASE_URL: str = "https://api.jmrai.com"
     LLM_MODEL: str = "claude-opus-4-7"
+    LLM_API_TIMEOUT_CONNECT: int = 30      # 连接超时（秒）
+    LLM_API_TIMEOUT_READ: int = 180        # 读取超时（秒）
+    LLM_API_TIMEOUT_TOTAL: int = 300       # 总硬截止时间（秒）
 
     # Email Notification (SMTP)
     # 用哪个邮箱发信就填哪组。收件人可以填多个，逗号分隔。

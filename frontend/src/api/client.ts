@@ -81,6 +81,7 @@ async function request<T>(
         code = 'INTERNAL_ERROR';
       }
     } catch { /* not json */ }
+    console.error(`[API] ${method} ${path} → ${res.status} ${code}: ${detail}`);
     throw new ApiError(res.status, code, detail, suggestion);
   }
 
