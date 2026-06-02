@@ -1,28 +1,41 @@
+import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { ApiKeyGuard } from './components/ApiKeyGuard';
-import { Dashboard } from './pages/Dashboard';
-import { Products } from './pages/Products';
-import { Logs } from './pages/Logs';
-import { Alerts } from './pages/Alerts';
-import { Settings } from './pages/Settings';
-import { RatesSettings } from './pages/RatesSettings';
-import { Reports } from './pages/Reports';
+
+// Lazy-loaded page components – reduces initial bundle size
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Products = lazy(() => import('./pages/Products'));
+const Logs = lazy(() => import('./pages/Logs'));
+const Alerts = lazy(() => import('./pages/Alerts'));
+const Settings = lazy(() => import('./pages/Settings'));
+const RatesSettings = lazy(() => import('./pages/RatesSettings'));
+const Reports = lazy(() => import('./pages/Reports'));
+
+function PageLoading() {
+  return (
+    <div className="flex items-center justify-center p-8">
+      <div className="text-gray-500">Loading...</div>
+    </div>
+  );
+}
 
 export function App() {
   return (
     <BrowserRouter>
       <ApiKeyGuard>
         <Layout>
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/products" element={<Products />} />
-            <Route path="/logs" element={<Logs />} />
-            <Route path="/alerts" element={<Alerts />} />
-            <Route path="/settings" element={<Settings />} />
-            <Route path="/rates-settings" element={<RatesSettings />} />
-            <Route path="/reports" element={<Reports />} />
-          </Routes>
+          <Suspense fallback={<PageLoading />}>
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/products" element={<Products />} />
+              <Route path="/logs" element={<Logs />} />
+              <Route path="/alerts" element={<Alerts />} />
+              <Route path="/settings" element={<Settings />} />
+              <Route path="/rates-settings" element={<RatesSettings />} />
+              <Route path="/reports" element={<Reports />} />
+            </Routes>
+          </Suspense>
         </Layout>
       </ApiKeyGuard>
     </BrowserRouter>
