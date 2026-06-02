@@ -16,7 +16,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import random
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -26,7 +25,9 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
     from App.services.cookie_manager import CookieManager
 
-logger = logging.getLogger(__name__)
+from App.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 # ── 页面 URL ───────────────────────────────────────
 SYCM_SEARCH_URL = "https://csp.aliexpress.com/apps/sycm/product/search"

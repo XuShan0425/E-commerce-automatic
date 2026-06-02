@@ -13,9 +13,19 @@
 
 import json
 import logging
+import os
 import sys
 from datetime import datetime, timezone
 from typing import Any
+
+
+LOG_LEVELS: dict[str, int] = {
+    "DEBUG": logging.DEBUG,
+    "INFO": logging.INFO,
+    "WARNING": logging.WARNING,
+    "ERROR": logging.ERROR,
+    "CRITICAL": logging.CRITICAL,
+}
 
 
 class JsonFormatter(logging.Formatter):
@@ -83,7 +93,9 @@ class StructuredLogger(logging.Logger):
 def _init_logging() -> None:
     logging.setLoggerClass(StructuredLogger)
     root = logging.getLogger()
-    root.setLevel(logging.INFO)
+
+    level_name = os.environ.get("LOG_LEVEL", "INFO").upper()
+    root.setLevel(LOG_LEVELS.get(level_name, logging.INFO))
 
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(JsonFormatter())
@@ -97,4 +109,22 @@ def get_logger(name: str) -> StructuredLogger:
     logger = logging.getLogger(name)
     if not isinstance(logger, StructuredLogger):
         return logger  # type: ignore[return-value]
+    return logger
+
+
+def bind_logger(logger: logging.Logger, **context: Any) -> logging.Logger:
+    """Return a child logger with extra context fields permanently attached.
+
+    Usage:
+        logger = get_logger(__name__)
+        logger = bind_logger(logger, sku_id="12345", source="manual")
+        logger.info("processing")  # includes sku_id and source in JSON output
+    """
+    if isinstance(logger, StructuredLogger):
+        logger = logging.getLogger(f"{logger.name}.{id(context)}")
+        logger.extra_fields = context  # type: ignore[attr-defined]
+        logger.setLevel(logging.INFO)
+        parent_handlers = logging.getLogger(logger.name.rsplit(".", 1)[0]).handlers
+        for h in parent_handlers:
+            logger.addHandler(h)
     return logger
