@@ -4,6 +4,7 @@ from App.models.alert import Alert
 from App.models.auth import ApiKey, User
 from App.models.base import (
     AdSnapshot,
+    CompetitorSnapshot,
     LogisticsRate,
     PlatformFee,
     PriceSnapshot,
@@ -33,6 +34,7 @@ __all__ = [
     "AdSnapshot",
     "PriceSnapshot",
     "ProfitAnalysis",
+    "CompetitorSnapshot",
     "ProductSku",
     "CoreMetric",
     "TrafficSource",

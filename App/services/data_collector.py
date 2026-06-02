@@ -14,20 +14,22 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import Insert as PgInsert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from App.models.base import AdSnapshot, PriceSnapshot, Product
-from App.models.system_state import is_global_stop_active
-
-from App.services.api_interceptor import AdDataInterceptor, CollectedAdData, CollectedPriceData
 from App.core.errors import ErrorCode, error_response
-from App.models.base import AdSnapshot, PriceSnapshot, Product
+from App.models.base import AdSnapshot, CompetitorSnapshot, PriceSnapshot
 from App.models.system_state import is_global_stop_active
+from App.services.api_interceptor import (
+    AdDataInterceptor,
+    CollectedAdData,
+    CollectedCompetitorData,
+    CollectedPriceData,
+)
 
 if TYPE_CHECKING:
     from App.services.browser import BrowserService
@@ -81,114 +83,7 @@ def _run_csp_export_sync(
         "ad_api_responses": 0,
         "errors": [],
         "duration_seconds": 0,
-        "collected_at": datetime.now(timezone.utc).isoformat(),
-        "method": "csp_export",
-    }
-
-    t0 = time.perf_counter()
-    browser_svc: BrowserService | None = None
-
-    try:
-        browser_svc = BrowserService(headless=headless)
-        context = browser_svc.new_context(cookies=cookies)
-        page = context.new_page()
-
-        for prod in products:
-            sku_id = prod.get("sku_id", "")
-            if not sku_id:
-                continue
-
-            records: list[dict] = []
-            for attempt in range(1 + CSP_EXPORT_MAX_RETRIES):
-                try:
-                    records = export_product_ad_data_sync(page, sku_id)
-                    if records:
-                        logger.info(
-                            "CSP 导出成功 [SKU=%s] 尝试=%d 记录数=%d",
-                            sku_id, attempt + 1, len(records),
-                        )
-                        break
-                    logger.warning(
-                        "CSP 导出无记录 [SKU=%s] 尝试=%d/{%d}",
-                        sku_id, attempt + 1, CSP_EXPORT_MAX_RETRIES + 1,
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "CSP 导出异常 [SKU=%s] 尝试=%d: %s",
-                        sku_id, attempt + 1, exc,
-                    )
-                    if attempt < CSP_EXPORT_MAX_RETRIES:
-                        time.sleep(2)
-
-            if not records:
-                result["errors"].append(f"SKU {sku_id} CSP 导出失败（已重试）")
-                continue
-
-            # 映射为 AdSnapshot 格式
-            mapped = map_export_records_to_ad_snapshot(records, sku_id)
-            for snap in mapped:
-                ad = CollectedAdData(
-                    source_url="csp_export",
-                    sku_id=snap.get("sku_id", sku_id),
-                    impressions=snap.get("impressions", 0),
-                    clicks=snap.get("clicks", 0),
-                    ctr=snap.get("ctr", 0.0),
-                    orders=snap.get("orders", 0),
-                    conversion_rate=snap.get("conversion_rate", 0.0),
-                    ad_spend=snap.get("ad_spend", 0.0),
-                    revenue=snap.get("revenue", 0.0),
-                    ad_type=snap.get("ad_type", "standard"),
-                )
-                result["ad_data"].append(ad)
-
-                # 如果有价格信息，同时产出 price_data
-                price = prod.get("current_price", prod.get("price", 0))
-                if price and price > 0:
-                    result["price_data"].append(
-                        CollectedPriceData(
-                            source_url="csp_export",
-                            sku_id=sku_id,
-                            current_price=float(price),
-                        )
-                    )
-
-        page.close()
-        context.close()
-
-        result["ad_count"] = len(result["ad_data"])
-        result["price_count"] = len(result["price_data"])
-        result["success"] = True
-
-    except Exception as exc:
-        result["errors"].append(f"CSP 导出流程异常: {exc}")
-    finally:
-        if browser_svc is not None:
-            browser_svc.close()
-        result["duration_seconds"] = round(time.perf_counter() - t0, 2)
-
-    return result
-
-
-def _run_collection_sync(
-    cookies: list[dict],
-    headless: bool = True,
-    timeout: int = 60,
-) -> dict:
-    """[回退路径] 在同步线程中执行 API 拦截数据采集。返回结构化结果。"""
-    from App.services.browser import BrowserService
-
-    result: dict = {
-        "success": False,
-        "ad_data": [],
-        "price_data": [],
-        "ad_count": 0,
-        "price_count": 0,
-        "total_responses": 0,
-        "ad_api_responses": 0,
-        "errors": [],
-        "duration_seconds": 0,
-        "collected_at": datetime.now(timezone.utc).isoformat(),
-        "method": "api_intercept",
+        "collected_at": datetime.now(UTC).isoformat(),
     }
 
     t0 = time.perf_counter()
@@ -219,8 +114,10 @@ def _run_collection_sync(
 
         result["ad_data"] = interceptor.result.ad_data
         result["price_data"] = interceptor.result.price_data
+        result["competitor_data"] = interceptor.result.competitor_data
         result["ad_count"] = len(interceptor.result.ad_data)
         result["price_count"] = len(interceptor.result.price_data)
+        result["competitor_count"] = len(interceptor.result.competitor_data)
         result["total_responses"] = interceptor.result.total_responses
         result["ad_api_responses"] = interceptor.result.ad_api_responses
         result["success"] = True
@@ -256,50 +153,17 @@ async def collect_ad_data(
 
     # ── 检查全局停止 ──────────────────────────────
     if await is_global_stop_active(db):
-        return error_response(ErrorCode.GLOBAL_STOP, details={"action": "请检查警报中心并清除全局停止"})
+        return error_response(
+            ErrorCode.GLOBAL_STOP,
+            details={"action": "请检查警报中心并清除全局停止"},
+        )
 
     # ── 查询已跟踪商品 ───────────────────────────
     prod_result = await db.execute(select(Product).where(Product.is_tracked))
     products = list(prod_result.scalars().all())
 
     loop = asyncio.get_event_loop()
-
-    raw: dict | None = None
-
-    # ── 主路径：CSP 导出 ─────────────────────────
-    if USE_CSP_EXPORT and products:
-        logger.info("采集策略: CSP SYCM 导出（%d 个商品）", len(products))
-        prod_dicts = [
-            {
-                "sku_id": p.sku_id,
-                "name": p.name,
-                "category": p.category,
-                "current_price": p.cost_price,
-            }
-            for p in products
-        ]
-        raw = await loop.run_in_executor(
-            None, _run_csp_export_sync, prod_dicts, cookies, headless, CSP_EXPORT_TIMEOUT
-        )
-
-        if raw.get("success") and raw.get("ad_data"):
-            logger.info(
-                "CSP 导出成功: %d 条广告数据, %d 条价格数据",
-                raw["ad_count"], raw["price_count"],
-            )
-        else:
-            logger.warning(
-                "CSP 导出未返回数据 (%s)，切换到 API 拦截回退",
-                "; ".join(raw.get("errors", [])),
-            )
-            raw = None  # 触发回退
-
-    # ── 回退路径：API 拦截 ───────────────────────
-    if raw is None:
-        logger.info("采集策略: API 拦截（回退路径）")
-        raw = await loop.run_in_executor(
-            None, _run_collection_sync, cookies, headless, timeout
-        )
+    raw = await loop.run_in_executor(None, _run_collection_sync, cookies, headless, timeout)
 
     if not raw.get("success"):
         return error_response(
@@ -310,7 +174,8 @@ async def collect_ad_data(
     # ── 写入数据库 ────────────────────────────────
     saved_ads = 0
     saved_prices = 0
-    now = datetime.now(timezone.utc)
+    saved_competitors = 0
+    now = datetime.now(UTC)
 
     for ad in raw.get("ad_data", []):
         if not isinstance(ad, CollectedAdData):
@@ -346,12 +211,30 @@ async def collect_ad_data(
         db.add(snapshot)
         saved_prices += 1
 
+    for comp in raw.get("competitor_data", []):
+        if not isinstance(comp, CollectedCompetitorData):
+            continue
+        if not comp.sku_id:
+            continue
+        snapshot = CompetitorSnapshot(
+            sku_id=comp.sku_id,
+            name=comp.name,
+            price=comp.price,
+            rating=comp.rating,
+            sales=comp.sales,
+            snapshot_time=now,
+            source_sku_id=comp.source_sku_id,
+        )
+        db.add(snapshot)
+        saved_competitors += 1
+
     await db.flush()
 
     return {
         "success": True,
         "ad_count": saved_ads,
         "price_count": saved_prices,
+        "competitor_count": saved_competitors,
         "total_responses": raw.get("total_responses", 0),
         "ad_api_responses": raw.get("ad_api_responses", 0),
         "duration_seconds": raw.get("duration_seconds", 0),
