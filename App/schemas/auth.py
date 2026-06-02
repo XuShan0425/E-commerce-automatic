@@ -8,12 +8,19 @@ from pydantic import BaseModel, Field
 
 class ApiKeyCreate(BaseModel):
     label: str | None = Field(None, max_length=200, description="标识用途")
+    scope: str = Field(
+        "admin",
+        max_length=500,
+        description="Comma-separated permission scopes, e.g. "
+        "'products:read,ads:read,profit:read'. 'admin' grants full access.",
+    )
 
 
 class ApiKeyRead(BaseModel):
     id: int
     key_hash: str
     label: str | None
+    scope: str
     is_active: bool
     created_at: datetime
     revoked_at: datetime | None
