@@ -497,12 +497,12 @@ def _run_scrape_sync(
             new_count = current_count - total_collected
             total_collected = current_count
 
-            print(f"  第 {page_num} 页: 新增 {new_count} 件, 累计 {current_count} 件")
+            logger.info("page_collected", extra={"page": page_num, "new_count": new_count, "total": current_count})
 
             # 尝试点击下一页
             clicked = _click_next_page(page)
             if not clicked:
-                print(f"  无更多页面，采集完成")
+                logger.info("collection_complete", extra={"total": current_count})
                 break
 
             page.wait_for_timeout(3_000)
