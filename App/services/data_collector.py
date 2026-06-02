@@ -1,13 +1,29 @@
-"""数据采集编排器 — 浏览器 + Cookie + 拦截器 + DB写入全流程."""
+"""数据采集编排器 — 浏览器 + Cookie + CSP 导出 + DB写入全流程.
+
+采集策略（按优先级）:
+  1. CSP SYCM 官方导出 (CSV/XLSX 下载) — 主路径，2026-06 起默认启用
+  2. API 拦截 (XHR 响应嗅探) — 回退路径，主路径失败时自动切换
+
+设计原则:
+  - 所有浏览器操作在同步线程中执行 (`loop.run_in_executor`)
+  - 双路径共享同一 DB 写入逻辑
+  - 下载文件使用 tempfile 自动清理
+"""
 
 from __future__ import annotations
 
 import json
+import logging
+import os
+import tempfile
 import time
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+
+from App.models.base import Product
 
 from App.services.api_interceptor import AdDataInterceptor, CollectedAdData, CollectedPriceData
 from App.core.errors import ErrorCode, error_response
@@ -18,26 +34,48 @@ if TYPE_CHECKING:
     from App.services.browser import BrowserService
     from App.services.cookie_manager import CookieManager
 
-# ── 速卖通卖家中心页面 (2026-05-31 实测) ────────
-# 旧域名 gsp.aliexpress.com 已废弃，新架构统一用 csp.aliexpress.com
-# ad.aliexpress.com 需独立登录且返回空页面 — 改用 CSP 内部推广入口
+logger = logging.getLogger(__name__)
+
+# ── Feature flag ───────────────────────────────────
+# 设为 False 可一键回退到旧 API 拦截方案
+USE_CSP_EXPORT = True
+
+# ── 速卖通卖家中心页面 (旧 API 拦截回退用) ──────
 AD_PAGES = [
-    "https://csp.aliexpress.com/",  # CSP 首页 (触发 dashboard API)
-    "https://csp.aliexpress.com/m_apps/p4p-pages/home?p4p_enter_from=sidebar",  # P4P 站内推广
-    "https://csp.aliexpress.com/m_apps/all-in-one-promotion/home",  # 一站式推广
+    "https://csp.aliexpress.com/",
+    "https://csp.aliexpress.com/m_apps/p4p-pages/home?p4p_enter_from=sidebar",
+    "https://csp.aliexpress.com/m_apps/all-in-one-promotion/home",
 ]
 
+# ── CSP 导出默认超时 ──────────────────────────────
+CSP_EXPORT_TIMEOUT = 55       # 单次导出等待上限（秒）
+CSP_EXPORT_MAX_RETRIES = 1    # 失败重试次数
 
-def _run_collection_sync(
+
+def _run_csp_export_sync(
+    products: list[dict[str, Any]],
     cookies: list[dict],
     headless: bool = True,
-    timeout: int = 60,
+    timeout: int = CSP_EXPORT_TIMEOUT,
 ) -> dict:
-    """在同步线程中执行数据采集。返回结构化结果。"""
+    """在同步线程中执行 CSP 导出采集。返回结构化结果。
+
+    对每个 tracked SKU:
+      1. 打开 SYCM 搜索页 → 搜索 SKU → 进入详情页
+      2. 导出核心指标 XLSX → openpyxl 解析
+      3. 映射列名 → AdSnapshot/PriceSnapshot 字段
+      4. 失败时重试 1 次后跳过
+    """
     from App.services.browser import BrowserService
+    from App.services.product_analytics_service import (
+        export_product_ad_data_sync,
+        map_export_records_to_ad_snapshot,
+    )
 
     result: dict = {
         "success": False,
+        "ad_data": [],
+        "price_data": [],
         "ad_count": 0,
         "price_count": 0,
         "total_responses": 0,
@@ -45,6 +83,113 @@ def _run_collection_sync(
         "errors": [],
         "duration_seconds": 0,
         "collected_at": datetime.now(timezone.utc).isoformat(),
+        "method": "csp_export",
+    }
+
+    t0 = time.perf_counter()
+    browser_svc: BrowserService | None = None
+
+    try:
+        browser_svc = BrowserService(headless=headless)
+        context = browser_svc.new_context(cookies=cookies)
+        page = context.new_page()
+
+        for prod in products:
+            sku_id = prod.get("sku_id", "")
+            if not sku_id:
+                continue
+
+            records: list[dict] = []
+            for attempt in range(1 + CSP_EXPORT_MAX_RETRIES):
+                try:
+                    records = export_product_ad_data_sync(page, sku_id)
+                    if records:
+                        logger.info(
+                            "CSP 导出成功 [SKU=%s] 尝试=%d 记录数=%d",
+                            sku_id, attempt + 1, len(records),
+                        )
+                        break
+                    logger.warning(
+                        "CSP 导出无记录 [SKU=%s] 尝试=%d/{%d}",
+                        sku_id, attempt + 1, CSP_EXPORT_MAX_RETRIES + 1,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "CSP 导出异常 [SKU=%s] 尝试=%d: %s",
+                        sku_id, attempt + 1, exc,
+                    )
+                    if attempt < CSP_EXPORT_MAX_RETRIES:
+                        time.sleep(2)
+
+            if not records:
+                result["errors"].append(f"SKU {sku_id} CSP 导出失败（已重试）")
+                continue
+
+            # 映射为 AdSnapshot 格式
+            mapped = map_export_records_to_ad_snapshot(records, sku_id)
+            for snap in mapped:
+                ad = CollectedAdData(
+                    source_url="csp_export",
+                    sku_id=snap.get("sku_id", sku_id),
+                    impressions=snap.get("impressions", 0),
+                    clicks=snap.get("clicks", 0),
+                    ctr=snap.get("ctr", 0.0),
+                    orders=snap.get("orders", 0),
+                    conversion_rate=snap.get("conversion_rate", 0.0),
+                    ad_spend=snap.get("ad_spend", 0.0),
+                    revenue=snap.get("revenue", 0.0),
+                    ad_type=snap.get("ad_type", "standard"),
+                )
+                result["ad_data"].append(ad)
+
+                # 如果有价格信息，同时产出 price_data
+                price = prod.get("current_price", prod.get("price", 0))
+                if price and price > 0:
+                    result["price_data"].append(
+                        CollectedPriceData(
+                            source_url="csp_export",
+                            sku_id=sku_id,
+                            current_price=float(price),
+                        )
+                    )
+
+        page.close()
+        context.close()
+
+        result["ad_count"] = len(result["ad_data"])
+        result["price_count"] = len(result["price_data"])
+        result["success"] = True
+
+    except Exception as exc:
+        result["errors"].append(f"CSP 导出流程异常: {exc}")
+    finally:
+        if browser_svc is not None:
+            browser_svc.close()
+        result["duration_seconds"] = round(time.perf_counter() - t0, 2)
+
+    return result
+
+
+def _run_collection_sync(
+    cookies: list[dict],
+    headless: bool = True,
+    timeout: int = 60,
+) -> dict:
+    """[回退路径] 在同步线程中执行 API 拦截数据采集。返回结构化结果。"""
+    from App.services.browser import BrowserService
+
+    result: dict = {
+        "success": False,
+        "ad_data": [],
+        "price_data": [],
+        "ad_count": 0,
+        "price_count": 0,
+        "total_responses": 0,
+        "ad_api_responses": 0,
+        "errors": [],
+        "duration_seconds": 0,
+        "collected_at": datetime.now(timezone.utc).isoformat(),
+        "method": "api_intercept",
     }
 
     t0 = time.perf_counter()
@@ -57,7 +202,6 @@ def _run_collection_sync(
         interceptor = AdDataInterceptor()
         interceptor.attach(page)
 
-        # 逐个访问广告相关页面，等待 API 响应
         for page_url in AD_PAGES:
             try:
                 page.goto(
@@ -65,9 +209,7 @@ def _run_collection_sync(
                     wait_until="domcontentloaded",
                     timeout=min(30_000, timeout * 1000),
                 )
-                # 等待额外时间让 XHR/Fetch 请求完成
                 page.wait_for_timeout(max(2_000, timeout * 50))
-                # 滚动页面触发懒加载
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 page.wait_for_timeout(2_000)
             except Exception as exc:
@@ -100,7 +242,12 @@ async def collect_ad_data(
     headless: bool = True,
     timeout: int = 60,
 ) -> dict:
-    """执行一次完整的数据采集，将结果写入数据库。"""
+    """执行一次完整的数据采集，将结果写入数据库。
+
+    采集策略:
+      1. CSP SYCM 导出（主路径，USE_CSP_EXPORT=True 时启用）
+      2. API 拦截（回退路径）
+    """
     import asyncio
 
     # ── 前置检查：Cookie ──────────────────────────
@@ -112,11 +259,48 @@ async def collect_ad_data(
     if await is_global_stop_active(db):
         return error_response(ErrorCode.GLOBAL_STOP, details={"action": "请检查警报中心并清除全局停止"})
 
-    # ── 在后台线程执行同步浏览器操作 ──────────────
+    # ── 查询已跟踪商品 ───────────────────────────
+    prod_result = await db.execute(select(Product).where(Product.is_tracked))
+    products = list(prod_result.scalars().all())
+
     loop = asyncio.get_event_loop()
-    raw = await loop.run_in_executor(
-        None, _run_collection_sync, cookies, headless, timeout
-    )
+
+    raw: dict | None = None
+
+    # ── 主路径：CSP 导出 ─────────────────────────
+    if USE_CSP_EXPORT and products:
+        logger.info("采集策略: CSP SYCM 导出（%d 个商品）", len(products))
+        prod_dicts = [
+            {
+                "sku_id": p.sku_id,
+                "name": p.name,
+                "category": p.category,
+                "current_price": p.cost_price,
+            }
+            for p in products
+        ]
+        raw = await loop.run_in_executor(
+            None, _run_csp_export_sync, prod_dicts, cookies, headless, CSP_EXPORT_TIMEOUT
+        )
+
+        if raw.get("success") and raw.get("ad_data"):
+            logger.info(
+                "CSP 导出成功: %d 条广告数据, %d 条价格数据",
+                raw["ad_count"], raw["price_count"],
+            )
+        else:
+            logger.warning(
+                "CSP 导出未返回数据 (%s)，切换到 API 拦截回退",
+                "; ".join(raw.get("errors", [])),
+            )
+            raw = None  # 触发回退
+
+    # ── 回退路径：API 拦截 ───────────────────────
+    if raw is None:
+        logger.info("采集策略: API 拦截（回退路径）")
+        raw = await loop.run_in_executor(
+            None, _run_collection_sync, cookies, headless, timeout
+        )
 
     if not raw.get("success"):
         return error_response(
@@ -125,7 +309,6 @@ async def collect_ad_data(
         )
 
     # ── 写入数据库 ────────────────────────────────
-
     saved_ads = 0
     saved_prices = 0
     now = datetime.now(timezone.utc)
@@ -175,4 +358,5 @@ async def collect_ad_data(
         "duration_seconds": raw.get("duration_seconds", 0),
         "errors": raw.get("errors", []),
         "collected_at": raw.get("collected_at"),
+        "method": raw.get("method", "unknown"),
     }
