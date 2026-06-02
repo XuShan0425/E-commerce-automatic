@@ -3,6 +3,80 @@
 
 ---
 
+## ⚠️ 新会话启动协议（强制遵守）
+
+当你（Opus）接收到一个新需求时，**必须按以下顺序执行，不得跳过任何步骤，不得自行扫描代码库**。
+
+### 步骤 1：读文档（你来做，Opus）
+
+只读文档，不动代码。按优先级读：
+
+| 优先级 | 读什么 | 为什么 |
+|--------|--------|--------|
+| P0 | 当前文件 `CLAUDE.md` | 项目全局规范、边界条件 |
+| P0 | `docs/ARCHITECTURE.md` | 分层架构、模块依赖、禁止导入规则 |
+| P0 | `AGENTS.md` → Context Map | 根据需求查表找到对应模块的文档入口 |
+| P1 | `docs/exec-plans/active/` 下对应 EPIC | 如果需求涉及已有 EPIC |
+| P1 | `docs/PLANS.md` | EPIC/TASK 文件规范 |
+| P2 | `docs/PRODUCT_SENSE.md` | 产品原则（如果涉及 AI 决策逻辑） |
+| P2 | 其他 `docs/` 下的设计文档 | 按 Context Map 指引 |
+
+**禁止**：在读完全部 P0 文档之前，**不得调用 Glob、Grep、Read 读取任何 `.py` / `.tsx` / `.js` 等源代码文件**。
+
+### 步骤 2：Haiku 微验证（调用 Workflow，让 Haiku 做）
+
+你读完文档后，对项目状态有一定理解。但**不要自己去搜索代码验证**，而是调用 `smart-orchestrator` 的 scout 模式，让 Haiku 做：
+
+```
+Workflow({
+  name: 'smart-orchestrator',
+  args: {
+    mode: 'scout',
+    tasks: [{ id: 'TASK-XXX', file: '.codex-tasks/active/...', goal: '...', allowed_files: '...' }]
+  }
+})
+```
+
+Haiku scout 会：
+- 用 Glob / Grep / Read 搜索相关代码
+- 返回结构化报告（涉及文件、关键行号、代码现状、风险、未知点）
+- **你基于这份报告做分析和规划**
+
+**为什么这么做**：
+- Haiku 搜索代码比你（Opus）便宜 30 倍
+- Haiku 返回的结构化报告比你 grep 后自己读更精炼
+- 你的上下文留给分析和决策，不做脏活
+
+### 步骤 3：制定计划（你来做，Opus）
+
+基于 P0 文档 + Haiku scout 报告，制定精确执行计划：
+
+- 引用具体文件路径和行号（来自 scout 报告）
+- 列出每一步要改什么
+- 列出验收标准和验证命令
+- 📌 展示给用户确认后再执行
+
+### 步骤 4：Sonnet 执行（调用 Workflow，让 Sonnet 做）
+
+```
+Workflow({
+  name: 'smart-orchestrator',
+  args: { mode: 'execute', plans: [...] }
+})
+```
+
+### 禁止行为清单
+
+| ❌ 禁止 | 为什么 |
+|---------|--------|
+| 新会话直接 `Glob("**/*.py")` 或 `Glob("**/*")` | 全量扫描浪费上下文，且不精准 |
+| 新会话直接 `Grep("def", path="App/")` | 无目的搜索，不如先看架构文档 |
+| 读完文档后用 Read 逐行读代码文件验证 | 用 Haiku scout 代替，更便宜更结构化 |
+| 把 P0 文档跳过了直接写代码 | 必须读完 |
+| 需求不明确时直接动手 | 先问清楚，再用 scout |
+
+---
+
 ## 项目概述
 
 构建一套**全自动**的速卖通广告管理系统，通过 Playwright 采集后台数据，AI 分析后自动执行广告决策，人工仅需查看日志和处理警报。
@@ -337,6 +411,7 @@ profit_analysis
 
 | 技能 | 触发场景 |
 |------|---------|
+| `smart-orchestrator` | 三级管线编排: Haiku 侦察 → Opus 规划 → Sonnet 执行（成本优化模式） |
 | `agent-planner` | 将需求规划为 EPIC / TASK 文件 |
 | `agent-worker` | 执行 `docs/exec-plans/active/` 中的任务 |
 | `agent-reviewer` | 审查 PR / 任务实现 |

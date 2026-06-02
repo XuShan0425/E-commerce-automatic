@@ -8,7 +8,8 @@ This project bundles skills that opencode will auto-invoke when relevant:
 
 | Skill | Triggers when |
 |-------|--------------|
-| `agent-orchestrator` | Orchestrating full EPIC lifecycle — plan, group, execute, review, integrate |
+| `agent-orchestrator` | Orchestrating full EPIC lifecycle (Opus default — legacy) |
+| `smart-orchestrator` | Three-tier orchestration: Haiku scout → Opus plan → Sonnet execute (cost-optimized) |
 | `agent-planner` | Planning complex requirements into EPIC/TASK files |
 | `agent-worker` | Executing a task from `.codex-tasks/active/` |
 | `agent-reviewer` | Reviewing PRs or task implementations |

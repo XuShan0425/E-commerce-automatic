@@ -6,6 +6,7 @@ from collections.abc import AsyncGenerator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from App.api.public.v1 import router as public_v1_router
 from App.api.v1 import router as v1_router
 from App.core.config import settings
 from App.core.database import async_session_factory, engine
@@ -44,3 +45,4 @@ app.add_middleware(
 )
 
 app.include_router(v1_router, prefix="/api/v1")
+app.include_router(public_v1_router, prefix="/api/public/v1")
